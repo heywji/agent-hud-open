@@ -56,6 +56,7 @@ struct ScreensPane: View {
                 SegmentedPills(options: [
                     SegmentOption(value: HUDMode.notch, label: L10n.text("刘海", "Notch")),
                     SegmentOption(value: HUDMode.logos, label: L10n.text("Logo 队列", "Logo queue")),
+                    SegmentOption(value: HUDMode.off, label: L10n.text("关闭", "Off")),
                 ], selection: binding(\.mode), theme: theme)
             }
             if placement.mode == .logos {

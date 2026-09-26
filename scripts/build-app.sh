@@ -39,6 +39,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
+  <!-- Own data directory, so this app never shares the ledger or permission.sock with hud-bridge. -->
+  <key>AgentHUDDataDirectory</key><string>Agent HUD Open Desktop</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>

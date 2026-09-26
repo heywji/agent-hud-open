@@ -6,6 +6,8 @@ public enum HUDMode: String, Codable, Sendable, CaseIterable {
     case notch
     /// A queue of the agents' own logos, parked on a screen edge, with the glow behind them as a backdrop.
     case logos
+    /// No HUD on this screen at all: no island, no queue, no glow, no hover panel.
+    case off
 }
 
 /// The screen edge a HUD is parked on. It runs along that edge and opens inward.

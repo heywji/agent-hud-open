@@ -77,7 +77,7 @@ final class IslandController {
     /// screen at all still gets one, so the app has somewhere to draw the moment a display appears.
     private func rebuild() {
         ScreenIdentity.forgetKeys()
-        let screens = NSScreen.screens
+        let screens = shownScreens
         rebuild(keys: screens.isEmpty ? ["screen:none"] : screens.map { ScreenIdentity.key(for: $0) }, screens: screens)
     }
 
@@ -121,6 +121,15 @@ final class IslandController {
         }
     }
 
+    /// The displays that get a HUD: every one not switched off. With all of them off the main display keeps
+    /// its HUD anyway, since the menu and alerts need one to act on.
+    private var shownScreens: [NSScreen] {
+        let screens = NSScreen.screens
+        let shown = screens.filter { settings.settings.screens[ScreenIdentity.key(for: $0)]?.mode != .off }
+        if shown.isEmpty, let main = NSScreen.main ?? screens.first { return [main] }
+        return shown
+    }
+
     /// The HUD the tests and the menu act on when no screen is named: the main display's.
     var primary: ScreenHUD? {
         NSScreen.main.map { ScreenIdentity.key(for: $0) }.flatMap { huds[$0] } ?? order.first.flatMap { huds[$0] }
@@ -158,7 +167,12 @@ final class IslandController {
 
     // MARK: Forwarding
 
-    func apply(animated: Bool) { huds.values.forEach { $0.apply(animated: animated) } }
+    func apply(animated: Bool) {
+        // Switching a display off or back on changes which HUDs exist, not just how they look.
+        let keys = shownScreens.map { ScreenIdentity.key(for: $0) }
+        if !keys.isEmpty, keys != order { return rebuild() }
+        huds.values.forEach { $0.apply(animated: animated) }
+    }
 
     func forceOpen() { underPointer?.forceOpen() }
 

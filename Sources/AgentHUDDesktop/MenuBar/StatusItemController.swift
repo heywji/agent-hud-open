@@ -48,13 +48,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     func refreshButton() {
         item.isVisible = !store.isAccessAllowed || settings.settings.showMenuBarIcon
         guard let button = item.button else { return }
-        let stops = store.isPaused || !store.isAccessAllowed ? GlowGradient.idleStops : GlowGradient.stops(levels: store.levels, light: SystemAppearance.isLight)
-        button.image = StatusIconRenderer.image(stops: stops)
-        let title = store.isAccessAllowed ? (store.maxUsedPct.map { " \(TokenFormat.percent($0))" } ?? " —") : " —"
-        button.attributedTitle = NSAttributedString(string: title, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular),
-            .baselineOffset: 0,
-        ])
+        // A monochrome gauge like the rest of the menu bar, rather than the battery-like notch silhouette.
+        let symbol = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: AppResources.applicationName)?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+        symbol?.isTemplate = true
+        button.image = symbol
+        // Icon only: the highest-usage number beside it is left out.
+        button.imagePosition = .imageOnly
+        button.title = ""
         button.toolTip = AppResources.applicationName + L10n.text(" · 最高已用额度", " · highest usage")
     }
 
