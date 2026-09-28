@@ -9,6 +9,10 @@ public enum QuotaForecast {
     /// then, as its island row does.
     public static func hint(snapshot: UsageSnapshot, insights: UsageInsights?, now: Date) -> String? {
         let used = max(0, min(100, 100 - snapshot.remainingPct))
+        // A fresh reading of an untouched window says so, whatever the previous cycle's pace was.
+        if used == 0, let reset = snapshot.resetAt, reset > now, now.timeIntervalSince(snapshot.updatedAt) < maximumReadingAge {
+            return L10n.text("额度充足 · 已用 0%", "Quota available · 0% used")
+        }
         return text(of: QuotaMath.outlook(snapshot: snapshot, insights: insights, now: now),
                     projectedUsedAtReset: QuotaMath.projectedUsedAtReset(usedPct: used, insights: insights, resetAt: snapshot.resetAt, now: now))
     }
@@ -21,9 +25,9 @@ public enum QuotaForecast {
         case .exhausted: return L10n.text("已耗尽", "Exhausted")
         case .noEstimate: return L10n.text("暂无预测", "No estimate")
         case .noUsage: return L10n.text("暂无消耗", "No usage")
-        case .insufficientData: return L10n.text("记录不足", "Insufficient data")
+        case .insufficientData: return L10n.text("预测记录不足", "Insufficient history for forecast")
         case .exhausts(let interval, let beforeReset):
-            guard beforeReset else { return projectedUsedAtReset.map(byReset) ?? L10n.text("记录不足", "Insufficient data") }
+            guard beforeReset else { return projectedUsedAtReset.map(byReset) ?? L10n.text("预测记录不足", "Insufficient history for forecast") }
             // Keep the duration tied to the provider's latest estimate; don't simulate unobserved consumption.
             let exhaustion = Countdown.forecast(interval)
             return L10n.text("耗尽 ~\(exhaustion)", "Exhausts ~\(exhaustion)")

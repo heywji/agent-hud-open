@@ -14,6 +14,17 @@ struct GrokClient: Sendable {
         let headers = ["Authorization": "Bearer \(token)", "x-xai-token-auth": "xai-grok-cli"]
         let response = try await http.json(URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!, headers: headers)
         var quota = try Self.parse(response)
+        if !quota.windows.contains(where: { $0.id == "grok" }),
+           let fallback = try? await GrokCreditsWire.fetch(http: http, token: token) {
+            let period = response["config"]["currentPeriod"]
+            let reset = DateParsing.internet(period["end"].stringValue)
+                ?? DateParsing.internet(response["config"]["billingPeriodEnd"].stringValue)
+            let duration = ProviderDate.period(start: DateParsing.internet(period["start"].stringValue), end: reset)
+            quota.windows.insert(.init(id: "grok", label: Self.periodLabel(period["type"].stringValue ?? fallback.periodType),
+                remaining: QuotaMath.remaining(usedPercent: fallback.used), reset: reset ?? fallback.end,
+                duration: duration ?? fallback.duration), at: 0)
+            quota.displayNotice = nil
+        }
         quota.account = Self.account(entry)
         quota.label = entry["email"].stringValue
         if let settings = try? await http.json(URL(string: "https://cli-chat-proxy.grok.com/v1/settings")!, headers: headers, timeout: 2) {
@@ -54,13 +65,7 @@ struct GrokClient: Sendable {
         let duration = ProviderDate.period(start: start, end: end)
         var quota = ProviderQuota()
         if let used = config["creditUsagePercent"].numberValue, used >= 0 {
-            let label: String
-            switch period["type"].stringValue {
-            case "USAGE_PERIOD_TYPE_WEEKLY": label = L10n.text("每周额度", "Weekly credits")
-            case "USAGE_PERIOD_TYPE_MONTHLY": label = L10n.text("每月额度", "Monthly credits")
-            default: label = L10n.text("订阅额度", "Subscription credits")
-            }
-            quota.windows.append(.init(id: "grok", label: label, remaining: QuotaMath.remaining(usedPercent: used), reset: end, duration: duration))
+            quota.windows.append(.init(id: "grok", label: periodLabel(period["type"].stringValue), remaining: QuotaMath.remaining(usedPercent: used), reset: end, duration: duration))
         } else {
             quota.displayNotice = L10n.text("Grok 已连接，但服务未返回已用额度", "Grok is connected, but used credits were not reported")
         }
@@ -71,5 +76,13 @@ struct GrokClient: Sendable {
                 remaining: QuotaMath.remaining(usedPercent: used / cap * 100), reset: end, duration: duration))
         }
         return quota
+    }
+
+    private static func periodLabel(_ type: String?) -> String {
+        switch type {
+        case "USAGE_PERIOD_TYPE_WEEKLY": L10n.text("每周额度", "Weekly credits")
+        case "USAGE_PERIOD_TYPE_MONTHLY": L10n.text("每月额度", "Monthly credits")
+        default: L10n.text("订阅额度", "Subscription credits")
+        }
     }
 }

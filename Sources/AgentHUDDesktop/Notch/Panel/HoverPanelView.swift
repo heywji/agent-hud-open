@@ -109,7 +109,7 @@ struct HoverPanelView: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                             Spacer(minLength: 8)
-                            Text("\(TokenFormat.short(session.tokensIn + session.tokensOut)) tok")
+                            Text("\(TokenFormat.short(session.tokensIn + session.tokensOut + session.cacheReadTokens)) tok")
                                 .fixedSize()
                         }
                         .foregroundStyle(theme.secondary)

@@ -462,7 +462,7 @@ final class UsageStoreTests: XCTestCase {
         store.selectedQuotaId = "codex"
         XCTAssertEqual(try XCTUnwrap(store.quotaForecastHint(for: "claude-opus")), "耗尽 ~1小时")
         XCTAssertEqual(try XCTUnwrap(store.quotaForecastHint(for: "codex")), "耗尽 ~2小时30分")
-        XCTAssertEqual(try XCTUnwrap(store.quotaForecastHint(for: "claude-sonnet")), "记录不足",
+        XCTAssertEqual(try XCTUnwrap(store.quotaForecastHint(for: "claude-sonnet")), "预测记录不足",
                       "a row without its own samples must not use the selected row or global forecast")
         XCTAssertNil(store.quotaForecastHint(for: "missing"))
         store.settings.update { $0.showResetCountdown = false }

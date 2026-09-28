@@ -31,6 +31,9 @@ struct ProviderHTTP: Sendable {
         guard (200..<300).contains(response.statusCode) else {
             throw ProviderHTTPError(status: response.statusCode)
         }
+        if let status = response.value(forHTTPHeaderField: "grpc-status"), status != "0" {
+            throw ProviderFailure.format
+        }
         var data = Data()
         for try await byte in bytes {
             guard data.count < 16 * 1024 * 1024 else { throw ProviderFailure.limit }

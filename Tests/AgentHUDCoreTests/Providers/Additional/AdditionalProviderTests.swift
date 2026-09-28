@@ -251,7 +251,35 @@ final class AdditionalProviderTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(events[0].input, 40)
         XCTAssertEqual(events[0].output, 20)
         XCTAssertEqual(events[0].cacheRead, 60)
+        XCTAssertEqual(events[0].reasoning, 10)
         XCTAssertEqual(events[0].model, "grok-test")
+    }
+
+    func testGrokPartialInferenceHistoryFillsTurnCountersWithoutDuplicatingCalls() {
+        let start = now.addingTimeInterval(-30), end = now.addingTimeInterval(-10)
+        let id = "grok:s"
+        let updates = ProviderSession(id: id, title: "Title", path: "/s/updates.jsonl", client: "Grok CLI",
+            events: [.init(id: "turn", model: "grok-test", timestamp: end, input: 100, output: 30, cacheRead: 200, reasoning: 12,
+                           origin: .init(group: id, priority: 1))],
+            startedAt: start, turns: [.init(provider: "Grok", sessionID: id, turnID: "t", state: .completed,
+                startedAtMs: RecordCoding.milliseconds(start), observedAtMs: RecordCoding.milliseconds(end))])
+        let inference = ProviderSession(id: id, title: "Inference", path: "/logs/unified.jsonl", client: "Grok CLI",
+            events: [.init(id: "call", model: "grok-test", timestamp: end.addingTimeInterval(-1), input: 40, output: 10, cacheRead: 80,
+                           reasoning: 4, origin: .init(group: id, priority: 2)),
+                     .init(id: "running-call", model: "grok-test", timestamp: now, input: 5, output: 2,
+                           origin: .init(group: id, priority: 2))])
+        let merged = GrokSessions.merge([updates, inference])
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged[0].title, "Title")
+        let events = UsageAggregation.usageUnion([merged[0].events.map { $0.usage(source: .grok) }])
+        XCTAssertEqual(events.reduce(0) { $0 + $1.tokensIn }, 105)
+        XCTAssertEqual(events.reduce(0) { $0 + $1.tokensOut }, 32)
+        XCTAssertEqual(events.reduce(0) { $0 + $1.cacheReadTokens }, 200)
+        XCTAssertEqual(events.reduce(0) { $0 + $1.reasoningTokens }, 12)
+        XCTAssertEqual(events.count, 3)
+        var complete = inference
+        complete.events[0] = updates.events[0]
+        XCTAssertEqual(GrokSessions.merge([updates, complete])[0].events.count, 2)
     }
 
     func testGrokLegacyContextCountersDoNotBecomeConsumption() throws {
@@ -480,6 +508,26 @@ final class AdditionalProviderTests: XCTestCase, @unchecked Sendable {
         store.replace(report: failed)
         store.now = readings.now
         XCTAssertEqual(store.rows.map(\.level), [nil], "a failed read still takes the window out of the glow")
+    }
+
+    func testInstalledGrokLocalUsageReadOnlyProbe() throws {
+        guard ProcessInfo.processInfo.environment["AGENT_HUD_PROBE_GROK"] == "1" else {
+            throw XCTSkip("Set AGENT_HUD_PROBE_GROK=1 for a read-only local usage probe")
+        }
+        let roots = GrokSessions.roots(home: FileManager.default.homeDirectoryForCurrentUser, environment: ProcessInfo.processInfo.environment)
+        var sessions: [ProviderSession] = []
+        for root in roots {
+            let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
+            while let url = files?.nextObject() as? URL {
+                if GrokSessions.accepts(url) { sessions += try GrokSessions.read(url).sessions }
+            }
+        }
+        let merged = GrokSessions.merge(sessions)
+        let old = sessions.filter { $0.path?.hasSuffix("/updates.jsonl") == true }.flatMap(\.events)
+        let events = merged.flatMap(\.events)
+        print("Grok local usage: sessions=\(merged.count), input=\(events.reduce(0) { $0 + $1.input }), output=\(events.reduce(0) { $0 + $1.output }), cache=\(events.reduce(0) { $0 + $1.cacheRead }), reasoning=\(events.reduce(0) { $0 + $1.reasoning }); turn-log input=\(old.reduce(0) { $0 + $1.input }), output=\(old.reduce(0) { $0 + $1.output }), cache=\(old.reduce(0) { $0 + $1.cacheRead })")
+        XCTAssertGreaterThanOrEqual(events.reduce(0) { $0 + $1.input }, old.reduce(0) { $0 + $1.input })
+        XCTAssertGreaterThanOrEqual(events.reduce(0) { $0 + $1.output }, old.reduce(0) { $0 + $1.output })
     }
 
     /// Explicit local smoke probe. Prints only counts and sanitized provider errors; never credential values or session content.

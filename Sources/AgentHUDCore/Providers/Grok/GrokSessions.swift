@@ -24,13 +24,32 @@ enum GrokSessions: LocalSessionLayout {
         url.lastPathComponent == "unified.jsonl" ? try unified(url) : try updates(url)
     }
 
-    /// The inference log owns usage for the sessions it covers; their title, workspace, turns and completions still come
-    /// from the session's updates log.
+    /// Inference records supply call timestamps; completed turns fill gaps in partial inference history.
+    /// Titles, workspaces, turns and completions come from the session's updates log.
     static func merge(_ sessions: [ProviderSession]) -> [ProviderSession] {
         let covered = Set(sessions.filter(isInference).map(\.id)), updates = updateLogs(sessions)
         return sessions.filter { isInference($0) || !covered.contains($0.id) }.map { item in
             guard isInference(item), let previous = updates[item.id] else { return item }
             var item = item
+            let inferenceEvents = item.events
+            // A unified log can start halfway through a session (or after log rotation). Fill only the
+            // counters missing from each completed turn, retaining inference timestamps for covered calls.
+            for event in previous.events {
+                let start = previous.turns.first { $0.observedAtMs == RecordCoding.milliseconds(event.timestamp) }?.startedAtMs
+                    .map { Date(timeIntervalSince1970: Double($0) / 1000) }
+                    ?? previous.events.filter { $0.timestamp < event.timestamp }.map(\.timestamp).max()
+                    ?? previous.startedAt ?? .distantPast
+                let covered = inferenceEvents.filter { $0.timestamp > start && $0.timestamp <= event.timestamp }
+                let missing = ProviderEvent(id: event.id, model: event.model, timestamp: event.timestamp,
+                    input: max(0, event.input - covered.reduce(0) { $0 + $1.input }),
+                    output: max(0, event.output - covered.reduce(0) { $0 + $1.output }),
+                    cacheRead: max(0, event.cacheRead - covered.reduce(0) { $0 + $1.cacheRead }),
+                    cacheWrite: max(0, event.cacheWrite - covered.reduce(0) { $0 + $1.cacheWrite }),
+                    reasoning: max(0, event.reasoning - covered.reduce(0) { $0 + $1.reasoning }),
+                    origin: .init(group: item.id, priority: 2))
+                if missing.input + missing.output + missing.cacheRead > 0 { item.events.append(missing) }
+            }
+            item.events.sort { $0.timestamp < $1.timestamp }
             item.title = previous.title; item.workspace = previous.workspace
             item.turns = previous.turns; item.completions = previous.completions
             item.startedAt = previous.startedAt
@@ -42,7 +61,7 @@ enum GrokSessions: LocalSessionLayout {
     static func notice(merging sessions: [ProviderSession]) -> String? {
         let updates = updateLogs(sessions)
         guard sessions.contains(where: { isInference($0) && updates[$0.id]?.events.isEmpty == false }) else { return nil }
-        return L10n.text("Grok 新旧日志并存：采用新版请求记录，旧历史可能不完整", "Grok log formats overlap: using inference records; older history may be incomplete")
+        return L10n.text("Grok 新旧日志并存：请求记录优先，缺失用量由已完成轮次补齐", "Grok log formats overlap: inference records supplemented by completed turns")
     }
 
     private static func isInference(_ session: ProviderSession) -> Bool { session.path?.hasSuffix("/unified.jsonl") == true }
@@ -96,6 +115,7 @@ enum GrokSessions: LocalSessionLayout {
                 let cache = try (usage["cachedReadTokens"] == .null ? usage["cacheReadTokens"] : usage["cachedReadTokens"]).optionalCounter()
                 guard cache <= input else { throw ProviderFailure.format }
                 session.events.append(.init(id: "\(id):\(eventID)", model: model, timestamp: date, input: input - cache, output: output, cacheRead: cache,
+                    cacheWrite: try usage["cacheCreationTokens"].optionalCounter(), reasoning: try usage["reasoningTokens"].optionalCounter(),
                     origin: .init(group: id, priority: 1)))
             } else { incomplete = true }
             let completedID = update["prompt_id"].stringValue ?? turnID ?? eventID
@@ -162,6 +182,7 @@ enum GrokSessions: LocalSessionLayout {
             }
             if sessions[id] == nil { sessions[id] = ProviderSession(id: id, title: "Grok · \(rawID.prefix(8))", path: url.path, client: "Grok CLI") }
             sessions[id]?.events.append(.init(id: identity, model: model, timestamp: date, input: input - cache, output: output, cacheRead: cache,
+                reasoning: try context["reasoning_tokens"].optionalCounter(),
                 origin: .init(group: id, priority: 2)))
         }
         return ProviderSessions(sessions: sessions.keys.sorted().compactMap { sessions[$0] }.map { session in
@@ -169,7 +190,8 @@ enum GrokSessions: LocalSessionLayout {
             session.events = session.events.map { event in
                 guard let candidate = pendingModels[event.id], processSessions[candidate.process]?.count == 1 else { return event }
                 return ProviderEvent(id: event.id, model: candidate.model, timestamp: event.timestamp,
-                    input: event.input, output: event.output, cacheRead: event.cacheRead, origin: event.origin)
+                    input: event.input, output: event.output, cacheRead: event.cacheRead,
+                    cacheWrite: event.cacheWrite, reasoning: event.reasoning, origin: event.origin)
             }
             return session
         })

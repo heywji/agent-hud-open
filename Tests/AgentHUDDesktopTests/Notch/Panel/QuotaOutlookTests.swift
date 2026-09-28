@@ -71,17 +71,17 @@ final class QuotaOutlookTests: XCTestCase {
             // Half a point left is exhausted.
             ("nearlyExhausted", .init(hint: "Exhausted", exhaustsIn: nil, projected: nil, detail: "Exhausted", tokensPerHour: 1000)),
             ("noCycle", .init(hint: "No estimate", exhaustsIn: nil, projected: nil, detail: "No estimate", tokensPerHour: nil)),
-            ("noInsights", .init(hint: "Insufficient data", exhaustsIn: nil, projected: nil, detail: "Insufficient data", tokensPerHour: 1000)),
+            ("noInsights", .init(hint: "Insufficient history for forecast", exhaustsIn: nil, projected: nil, detail: "Insufficient history for forecast", tokensPerHour: 1000)),
             ("noUsage", .init(hint: "No usage", exhaustsIn: nil, projected: nil, detail: "No usage", tokensPerHour: 1000)),
-            ("insufficientData", .init(hint: "Insufficient data", exhaustsIn: nil, projected: nil, detail: "Insufficient data", tokensPerHour: 1000)),
-            ("zeroTimeToExhaust", .init(hint: "Insufficient data", exhaustsIn: nil, projected: nil, detail: "Insufficient data", tokensPerHour: 1000)),
-            ("infiniteTime", .init(hint: "Insufficient data", exhaustsIn: nil, projected: nil, detail: "Insufficient data", tokensPerHour: 1000)),
+            ("insufficientData", .init(hint: "Insufficient history for forecast", exhaustsIn: nil, projected: nil, detail: "Insufficient history for forecast", tokensPerHour: 1000)),
+            ("zeroTimeToExhaust", .init(hint: "Insufficient history for forecast", exhaustsIn: nil, projected: nil, detail: "Insufficient history for forecast", tokensPerHour: 1000)),
+            ("infiniteTime", .init(hint: "Insufficient history for forecast", exhaustsIn: nil, projected: nil, detail: "Insufficient history for forecast", tokensPerHour: 1000)),
             ("exhaustsBeforeReset", .init(hint: "Exhausts ~1h", exhaustsIn: hour, projected: nil, detail: at(hour), tokensPerHour: 1000)),
             ("exhaustsAfterReset", .init(hint: "70% by reset", exhaustsIn: nil, projected: 70, detail: "70% by reset", tokensPerHour: 1000)),
             // A reading whose reset passed shows no level, so the row gives it no burn rate or token rate.
-            ("resetPassed", .init(hint: "Insufficient data", exhaustsIn: nil, projected: nil, detail: "—", tokensPerHour: nil)),
+            ("resetPassed", .init(hint: "Insufficient history for forecast", exhaustsIn: nil, projected: nil, detail: "—", tokensPerHour: nil)),
             ("weekly", .init(hint: "Exhausts ~50h", exhaustsIn: 50 * hour, projected: nil, detail: at(50 * hour), tokensPerHour: 1167)),
-            ("fullWindow", .init(hint: "Insufficient data", exhaustsIn: nil, projected: nil, detail: "Insufficient data", tokensPerHour: 1000)),
+            ("fullWindow", .init(hint: "Quota available · 0% used", exhaustsIn: nil, projected: nil, detail: "Insufficient history for forecast", tokensPerHour: 1000)),
         ]
         XCTAssertEqual(expected.map { $0.0 }, grid.map(\.name))
         try withStore(grid) { store in

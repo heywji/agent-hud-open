@@ -50,7 +50,7 @@ final class QuotaForecastTests: XCTestCase {
     func testInsufficientOrFlatSamplesDoNotInventAnETA() throws {
         let last = QuotaSample(agentId: "window", timestamp: now, remainingPct: 67)
         let first = QuotaSample(agentId: "window", timestamp: now.addingTimeInterval(-1800), remainingPct: 67)
-        for (samples, expected) in [([last], "记录不足"), ([first, last], "暂无消耗")] {
+        for (samples, expected) in [([last], "预测记录不足"), ([first, last], "暂无消耗")] {
             let rate = UsageAnalytics.burnRate(samples: samples, cycle: snapshot(remaining: 67).cycle, now: now)
             let forecast = rate.map { insights(rate: $0, remaining: 67) }
             let hint = try XCTUnwrap(QuotaForecast.hint(snapshot: snapshot(remaining: 67), insights: forecast, now: now))
@@ -67,12 +67,32 @@ final class QuotaForecastTests: XCTestCase {
         XCTAssertEqual(staleHint, "耗尽 ~2小时")
         let resetHint = try XCTUnwrap(QuotaForecast.hint(snapshot: snapshot(remaining: 60, resetIn: -1),
                                                        insights: forecast, now: now))
-        XCTAssertEqual(resetHint, "记录不足")
+        XCTAssertEqual(resetHint, "预测记录不足")
     }
 
     func testExhaustedQuotaDoesNotRequireABurnRate() {
         XCTAssertEqual(QuotaForecast.hint(snapshot: snapshot(remaining: 0, resetIn: 14 * 60), insights: nil, now: now),
                        "已耗尽")
+    }
+
+    func testFreshUnusedQuotaIsAvailableWithoutForecastHistory() {
+        XCTAssertEqual(QuotaForecast.hint(snapshot: snapshot(remaining: 100), insights: nil, now: now),
+                       "额度充足 · 已用 0%")
+        // A previous cycle's pace cannot override the current confirmed zero reading.
+        let oldPace = insights(rate: BurnRate(pctPerHour: 30), remaining: 100)
+        XCTAssertEqual(QuotaForecast.hint(snapshot: snapshot(remaining: 100), insights: oldPace, now: now),
+                       "额度充足 · 已用 0%")
+        L10n.setLanguage(.en)
+        XCTAssertEqual(QuotaForecast.hint(snapshot: snapshot(remaining: 100), insights: nil, now: now),
+                       "Quota available · 0% used")
+    }
+
+    func testStaleZeroCannotClaimCurrentQuotaIsAvailable() {
+        let stale = UsageSnapshot(agentId: "window", remainingPct: 100, resetAt: now.addingTimeInterval(3600),
+                                  windowDuration: 18000, updatedAt: now.addingTimeInterval(-QuotaForecast.maximumReadingAge))
+        XCTAssertEqual(QuotaForecast.hint(snapshot: stale, insights: nil, now: now), "预测记录不足")
+        XCTAssertEqual(QuotaForecast.hint(snapshot: snapshot(remaining: 100, resetIn: -1), insights: nil, now: now),
+                       "预测记录不足")
     }
 
     func testSubMinuteEstimateNeverSaysZeroMinutes() {
