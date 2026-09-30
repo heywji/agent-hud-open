@@ -105,7 +105,7 @@ final class IslandController {
         order = keys
         // Every glow shares one budget, so attaching a display costs frames rather than CPU.
         GlowAnimator.activeGlows = huds.count
-        apply(animated: false)
+        huds.values.forEach { $0.apply(animated: false) }
         for question in questions.sorted(by: { ($0.waitingSince ?? .distantFuture) < ($1.waitingSince ?? .distantFuture) }) {
             present(question)
         }
