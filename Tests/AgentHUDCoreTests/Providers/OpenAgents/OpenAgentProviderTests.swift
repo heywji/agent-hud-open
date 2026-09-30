@@ -122,6 +122,41 @@ final class OpenAgentProviderTests: XCTestCase {
         XCTAssertNil(result.windows[2].duration)
     }
 
+    func testGoResetsAtFromTheConsoleUsageEndpoint() throws {
+        let root = try json(#"{"usage":{"rolling":{"status":"ok","percent":28,"resetsAt":"2026-09-30T19:38:38.777Z"},"weekly":{"status":"ok","percent":11,"resetsAt":"2026-10-05T00:00:00.000Z"}}}"#)
+        let result = try OpenAgentQuotaClient.parse(root, credential: credential(.go), now: now)
+        XCTAssertEqual(result.windows.map(\.remaining), [72, 89])
+        XCTAssertEqual(result.windows[1].reset, DateParsing.internet("2026-10-05T00:00:00.000Z"))
+        XCTAssertEqual(result.windows.map(\.label), ["5h", "Weekly"], "Go's windows are named as Codex names its own")
+    }
+
+    /// OpenCode signed in to an opencode.ai console account reaches Go with that account's token and organization.
+    func testOpenCodeConsoleAccountReadsGoUsage() throws {
+        func console(url: String, expiry: Double) throws -> OpenAgentCredential? {
+            let file = try temp().appendingPathComponent("opencode.db")
+            var db: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(file.path, &db), SQLITE_OK)
+            defer { sqlite3_close(db) }
+            for statement in [
+                "CREATE TABLE account(id TEXT, email TEXT, url TEXT, access_token TEXT, refresh_token TEXT, token_expiry INTEGER)",
+                "CREATE TABLE account_state(id INTEGER, active_account_id TEXT, active_org_id TEXT)",
+                "INSERT INTO account VALUES ('user_1', 'a@example.com', '\(url)', 'console-token', 'refresh', \(Int64(expiry * 1000)))",
+                "INSERT INTO account_state VALUES (1, 'user_1', 'org_1')",
+            ] { XCTAssertEqual(sqlite3_exec(db, statement, nil, nil, nil), SQLITE_OK) }
+            return OpenAgentCredentials.openCodeConsole(file, now: now)
+        }
+        let go = try XCTUnwrap(console(url: "https://opencode.ai/console", expiry: now.timeIntervalSince1970 + 86400))
+        XCTAssertEqual(go.service, .go)
+        XCTAssertEqual(go.token, "console-token")
+        XCTAssertEqual(go.headers["x-opencode-org-id"], "org_1")
+        XCTAssertEqual(go.endpoint.absoluteString, "https://opencode.ai/inference/go/v1/usage")
+        XCTAssertEqual(go.pool.provider, "OpenCode Go")
+        XCTAssertEqual(go.accountLabel, "a@example.com")
+        XCTAssertNil(try console(url: "https://opencode.ai/console", expiry: now.timeIntervalSince1970 - 1), "an expired token is not used")
+        XCTAssertNil(try console(url: "https://console.example.com", expiry: now.timeIntervalSince1970 + 86400),
+                     "a token is never sent to another host than the console that issued it")
+    }
+
     func testGLMRegionsAndMCPStaySeparateAndInvalidResetIsOmitted() throws {
         let raw = #"{"success":true,"code":200,"data":{"limits":[{"type":"CREDIT_LIMIT","unit":3,"number":5,"percentage":40,"usage":100,"currentValue":20,"remaining":75,"nextResetTime":1999999999999},{"type":"TIME_LIMIT","unit":5,"number":1,"percentage":5}]}}"#
         let cn = try OpenAgentQuotaClient.parse(json(raw), credential: credential(.glmChina), now: now)

@@ -105,7 +105,8 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
         for credential in raw {
             if let known = prior[credential.pool.id], known.pool.evidence == .account {
                 resolved.append((credential.pool.id, .init(service: credential.service, token: credential.token,
-                    pool: known.pool, headers: credential.headers, clients: credential.clients, expiresAt: credential.expiresAt), known))
+                    pool: known.pool, headers: credential.headers, clients: credential.clients, expiresAt: credential.expiresAt,
+                    usageURL: credential.usageURL, accountLabel: credential.accountLabel), known))
                 continue
             }
             do {
@@ -222,7 +223,7 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
             guard let quota = result.quota else {
                 // A reading that failed without a sign-out keeps the account current, at its last reading, with the reason.
                 if result.isActive {
-                    accounts[pool.provider, default: []].append(AccountObservation(account: ProviderAccount(pool: pool), plan: result.plan,
+                    accounts[pool.provider, default: []].append(AccountObservation(account: ProviderAccount(pool: pool), label: result.credential.accountLabel, plan: result.plan,
                         observedAt: result.readAt ?? result.at, quotaNotice: result.notice,
                         readingIssue: result.notice.map(ReadingIssue.readFailed)))
                 }
@@ -233,7 +234,7 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
             }
             if result.isActive {
                 // A reading whose account the service could not confirm is not verified either.
-                accounts[pool.provider, default: []].append(AccountObservation(account: ProviderAccount(pool: pool), plan: quota.plan,
+                accounts[pool.provider, default: []].append(AccountObservation(account: ProviderAccount(pool: pool), label: result.credential.accountLabel, plan: quota.plan,
                     observedAt: result.at, quotaNotice: result.notice, readingIssue: result.notice.map(ReadingIssue.unverified)))
             }
             for window in quota.windows {

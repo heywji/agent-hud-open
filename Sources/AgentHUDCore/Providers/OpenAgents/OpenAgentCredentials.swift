@@ -10,9 +10,14 @@ struct OpenAgentCredential: Sendable {
     var headers: [String: String] = [:]
     var clients: Set<String> = []
     var expiresAt: Date? = nil
+    /// Where a credential that is not the plan's API key reads its usage, such as an OpenCode console sign-in.
+    var usageURL: URL? = nil
+    /// How the account names itself, such as a console account's email; nil for an API key.
+    var accountLabel: String? = nil
     func isUsable(at now: Date) -> Bool { expiresAt.map { $0 > now.addingTimeInterval(60) } ?? true }
     var endpoint: URL {
-        switch service {
+        if let usageURL { return usageURL }
+        return switch service {
         case .kimi: URL(string: "https://api.kimi.com/coding/v1/usages")!
         case .kimiGlobal: URL(string: "https://api.kimi.ai/coding/v1/usages")!
         case .go: URL(string: "https://opencode.ai/zen/go/v1/usage")!
@@ -56,7 +61,7 @@ enum OpenAgentCredentials {
     }
     static func credential(_ service: OpenAgentCredential.Service, token: String, client: String,
                            accountID: String? = nil, organization: String? = nil, project: String? = nil,
-                           headers: [String: String] = [:], expiresAt: Date? = nil) -> OpenAgentCredential {
+                           headers: [String: String] = [:], expiresAt: Date? = nil, usageURL: URL? = nil) -> OpenAgentCredential {
         let isKimi = service == .kimi || service == .kimiGlobal
         let provider = isKimi ? "Kimi" : service == .go ? "OpenCode Go" : "GLM"
         let realm = service == .glmChina || service == .kimi ? "CN" : "International"
@@ -65,7 +70,7 @@ enum OpenAgentCredentials {
             scope: RecordCoding.hash([accountID ?? token]), evidence: accountID == nil ? .credential : .account,
             organization: organization.map { RecordCoding.hash([$0]) }, project: project.map { RecordCoding.hash([$0]) }, entitlement: product)
         let expiry = [expiresAt, isKimi ? tokenExpiry(token) : nil].compactMap { $0 }.min()
-        return .init(service: service, token: token, pool: pool, headers: headers, clients: [client], expiresAt: expiry)
+        return .init(service: service, token: token, pool: pool, headers: headers, clients: [client], expiresAt: expiry, usageURL: usageURL)
     }
 
     /// JWT expiry can reject an expired token, but unverified claims never establish account identity.
@@ -120,6 +125,11 @@ enum OpenAgentCredentials {
         for (provider, auth) in read(paths.openCode.appendingPathComponent("auth.json")).objectValue ?? [:] where validConfig && auth["type"].stringValue == "api" {
             add(service(provider: provider, baseURL: openBase(provider), client: .opencode), auth["key"].stringValue, "OpenCode")
         }
+        // Current OpenCode reaches Go through the signed-in opencode.ai console account instead of an API key.
+        if validConfig, openBase("opencode-go") == nil, !found.contains(where: { $0.service == .go }),
+           let console = openCodeConsole(paths.openCode.appendingPathComponent("opencode.db"), now: now) {
+            found.append(console)
+        }
         let piConfig = read(paths.pi.appendingPathComponent("models.json"))["providers"]
         for (provider, auth) in read(paths.pi.appendingPathComponent("auth.json")).objectValue ?? [:] {
             let resolvedService = service(provider: provider, baseURL: piConfig[provider]["baseUrl"].stringValue, client: .pi)
@@ -158,6 +168,30 @@ enum OpenAgentCredentials {
         }
         return merge(found)
     }
+    /// The Go plan of the opencode.ai console account OpenCode is signed in to, read from its database: the active
+    /// account's access token and organization. OpenCode refreshes the token itself; an expired one is not used.
+    static func openCodeConsole(_ url: URL, now: Date) -> OpenAgentCredential? {
+        guard FileManager.default.fileExists(atPath: url.path), let db = try? ReadOnlySQLite(url) else { return nil }
+        var row: (id: String, token: String, url: String, expiry: String?, org: String, email: String?)?
+        try? db.rows("""
+            SELECT a.id, a.access_token, a.url, a.token_expiry, s.active_org_id, a.email FROM account_state s
+            JOIN account a ON a.id = s.active_account_id WHERE s.active_org_id IS NOT NULL LIMIT 1
+            """) { r in
+            guard let id = ReadOnlySQLite.text(r, 0), let token = ReadOnlySQLite.text(r, 1), let url = ReadOnlySQLite.text(r, 2),
+                  let org = ReadOnlySQLite.text(r, 4) else { return }
+            row = (id, token, url, ReadOnlySQLite.text(r, 3), org, ReadOnlySQLite.text(r, 5))
+        }
+        // The token is only ever sent to opencode.ai, the host of the console it was issued by.
+        guard let row, !row.token.isEmpty, !row.org.isEmpty, URL(string: row.url)?.scheme == "https",
+              URL(string: row.url)?.host?.lowercased() == "opencode.ai" else { return nil }
+        let expiry = row.expiry.flatMap(Double.init).map { Date(timeIntervalSince1970: $0 / 1000) }
+        var value = credential(.go, token: row.token, client: "OpenCode", accountID: row.id, organization: row.org,
+                               headers: ["x-opencode-org-id": row.org], expiresAt: expiry,
+                               usageURL: URL(string: "https://opencode.ai/inference/go/v1/usage")!)
+        value.accountLabel = row.email
+        return value.isUsable(at: now) ? value : nil
+    }
+
     static func kimiStorageName(_ service: OpenAgentCredential.Service) -> String {
         guard service == .kimiGlobal else { return "kimi-code" }
         let serialized = #"{"oauthHost":"https://auth.kimi.ai","baseUrl":"https://api.kimi.ai/coding/v1"}"#

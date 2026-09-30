@@ -89,9 +89,10 @@ struct OpenAgentQuotaClient: Sendable {
                 guard value != .null else { continue }
                 guard let percent = numeric(value["percent"]) else { throw ProviderFailure.format }
                 let reset = numeric(value["resetInSec"]).flatMap { $0 <= 253402300799 - now.timeIntervalSince1970 ? now.addingTimeInterval($0) : nil }
-                    ?? DateParsing.internet(value["resetTime"].stringValue)
+                    ?? DateParsing.internet(value["resetTime"].stringValue) ?? DateParsing.internet(value["resetsAt"].stringValue)
                 // Direct API percentage is 0...100: 0.5 means 0.5%, never 50%.
-                try add(key, key, percent, reset: reset, duration: key == "rolling" ? 5 * 3600 : key == "weekly" ? 7 * 86400 : nil)
+                let name = key == "rolling" ? "5h" : key == "weekly" ? L10n.text("每周", "Weekly") : L10n.text("每月", "Monthly")
+                try add(key, key, percent, reset: reset, duration: key == "rolling" ? 5 * 3600 : key == "weekly" ? 7 * 86400 : nil, named: name)
             }
         case .glmChina, .glmGlobal:
             guard root["success"].boolValue == true, root["code"].numberValue == 200,
