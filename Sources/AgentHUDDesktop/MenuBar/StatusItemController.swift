@@ -138,8 +138,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let label = row.agent.name
         let name = showVendor ? row.agent.compactName : label
         let value: String
-        if let used = row.usedPct {
-            value = "\(TokenFormat.percent(used)) · \(row.resetLabel(now: store.now, compact: true))"
+        if let left = row.leftPct {
+            value = "\(TokenFormat.left(left)) · \(row.resetLabel(now: store.now, compact: true))"
         } else {
             value = row.missingQuotaLabel
         }

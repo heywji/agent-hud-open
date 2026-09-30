@@ -31,7 +31,7 @@ final class AccountMenuTests: XCTestCase {
         XCTAssertTrue(menu.items[1].view?.accessibilityLabel()?.contains("Current account") == true)
         XCTAssertTrue(menu.items[2].view?.accessibilityLabel()?.contains("Pending update") == true)
         XCTAssertTrue(menu.items[3].view?.accessibilityLabel()?.contains("Last read 1h ago") == true)
-        XCTAssertTrue(menu.items[4].view?.accessibilityLabel()?.hasSuffix("100% · —") == true)
+        XCTAssertTrue(menu.items[4].view?.accessibilityLabel()?.hasSuffix("0% left · —") == true)
         XCTAssertNil(store.rows[0].level, "a past deadline cannot show a confirmed exhaustion status")
         let future = UsageReport(generatedAt: now, snapshots: [.init(agentId: agents[0].id, remainingPct: 50,
             resetAt: now.addingTimeInterval(20), updatedAt: now)], sessions: [], discoveredAgents: [agents[0]])
@@ -86,13 +86,13 @@ final class AccountMenuTests: XCTestCase {
         XCTAssertEqual(menu.items.prefix(9).map { [$0.view?.accessibilityLabel() ?? "", $0.toolTip ?? "—"] }, [
             ["Codex", "—"],
             ["failed@example.com, Last read 5m ago", "Quota read failed · Codex login failed"],
-            ["Weekly, 90% · <1m", "—"],
-            ["Credits, 30% · —", "—"],
+            ["Weekly, 10% left · <1m", "—"],
+            ["Credits, 70% left · —", "—"],
             ["stale@example.com, Last read 2h ago", "Codex login failed"],
-            ["Weekly, 60% · Pending update", "—"],
-            ["5h, 80% · 2h05m", "—"],
+            ["Weekly, 40% left · Pending update", "—"],
+            ["5h, 20% left · 2h05m", "—"],
             ["old@example.com, Last read 3h ago", "Codex login failed"],
-            ["Weekly, 98% · —", "—"],
+            ["Weekly, 2% left · —", "—"],
         ])
         XCTAssertEqual(store.accountSections(store.rows).map { store.accountNotice(for: $0) },
                        ["Quota read failed · Codex login failed", "Codex login failed", "Codex login failed"],

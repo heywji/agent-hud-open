@@ -49,7 +49,8 @@ struct ModelUsageRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: IslandRowLayout.nameWidth, alignment: .leading)
-            ProgressTrack(fraction: (row.usedPct ?? 0) / 100,
+            // The quota bar shows what is left, as the number beside it; the forecast bar shows use and its projection.
+            ProgressTrack(fraction: (metric == .burnRate ? row.usedPct ?? 0 : row.leftPct ?? 0) / 100,
                           projectedFraction: metric == .burnRate ? projectedUsedPct / 100 : nil,
                           fill: isLoading || row.level == nil ? theme.secondary : color,
                           projectionFill: runsOut ? theme.status(.warning) : theme.secondary,
@@ -58,7 +59,7 @@ struct ModelUsageRow: View {
             Text(value ?? "—")
                 .font(.tabular(13, .semibold))
                 .foregroundStyle(value == nil ? theme.secondary : valueColor)
-                .frame(width: 62, alignment: .trailing)
+                .frame(width: metric == .quota ? 78 : 62, alignment: .trailing)
                 .contentTransition(.numericText())
             if showsDetail {
                 Text(metricDetail)
@@ -134,7 +135,7 @@ struct QuotaRowMetrics {
     func value(_ metric: IslandQuotaMetric) -> String? {
         switch metric {
         case .quota:
-            row.usedPct.map(TokenFormat.percent)
+            row.leftPct.map(TokenFormat.left)
         case .burnRate:
             insights?.burnRatePctPerHour.map { String(format: "%.1f%%/h", $0) }
         case .tokens:

@@ -19,8 +19,10 @@ public struct AgentRow: Hashable, Sendable, Identifiable {
     /// Other accounts show their last reading without a status level, so they stay out of the glow and alerts.
     public var isCurrentAccount: Bool { assessment.isCurrentAccount }
 
-    /// Share of the window already consumed; the UI shows usage, not what is left.
+    /// Share of the window already consumed, for forecasts and projections.
     public var usedPct: Double? { remainingPct.map { max(0, min(100, 100 - $0)) } }
+    /// Share of the window still available; quota rows show this, as Claude Code and Codex do.
+    public var leftPct: Double? { remainingPct.map { max(0, min(100, $0)) } }
 
     public var missingQuotaLabel: String {
         "—"

@@ -26,6 +26,11 @@ public enum TokenFormat {
         return part > 0 && value < 0.5 ? "<1%" : percent(value)
     }
 
+    /// What is left of a quota window, worded as Claude Code and Codex do: 95 → "95% left" / "剩 95%".
+    public static func left(_ value: Double) -> String {
+        L10n.text("剩 \(percent(value))", "\(percent(value)) left")
+    }
+
     /// Percent with one decimal: 6.2 → "6.2%".
     public static func percent1(_ value: Double) -> String {
         String(format: "%.1f%%", value)
