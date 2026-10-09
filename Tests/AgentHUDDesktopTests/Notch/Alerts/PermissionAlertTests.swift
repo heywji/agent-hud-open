@@ -15,23 +15,67 @@ final class PermissionAlertTests: XCTestCase {
                                       model: "opus", startedAt: nil, completedAt: Date()))
     }
 
-    func testARequestHoldsTheIslandAndNewsDoesNotWaitBehindIt() async throws {
+    func testARequestHoldsTheIslandAndKeepsRepliesBesideIt() async throws {
         let queue = IslandAlertQueue()
         var expired = 0
         queue.onExpire = { expired += 1 }
+        let reply = completion()
 
         XCTAssertTrue(queue.show(.permission(request("a")), inUsagePanel: false))
-        XCTAssertFalse(queue.show(completion(), inUsagePanel: false), "news never takes a question's place")
+        XCTAssertFalse(queue.show(reply, inUsagePanel: false), "a reply joins the list without replacing the question")
         XCTAssertFalse(queue.show(.permission(request("b")), inUsagePanel: false), "a second request waits its turn")
+        XCTAssertEqual(queue.sessionEvents.map(\.id), ["a", reply.id, "b"])
+        let quota = IslandAlert.quota(QuotaAlert.preview(.reset, agent: DemoData.agents[0]))
+        XCTAssertFalse(queue.show(quota, inUsagePanel: false))
+        XCTAssertFalse(queue.contains(id: quota.id), "quota news still stays out of an approval queue")
 
         try await Task.sleep(for: IslandAlertQueue.visibleDuration + .milliseconds(200))
         XCTAssertEqual(expired, 0, "a request is not news: it stays until it is answered or withdrawn")
         XCTAssertEqual(queue.current?.alert.id, "a")
 
-        // Answering the first hands over to the one that was waiting; the completion was dropped, not queued.
+        // The oldest unanswered request comes next, with the reply still waiting in the list.
         let next = queue.remove(id: "a")
         XCTAssertTrue(next.removed)
         XCTAssertEqual(next.next?.id, "b")
+        XCTAssertTrue(queue.contains(id: reply.id))
+        let second = try XCTUnwrap(next.next)
+        XCTAssertTrue(queue.show(second, inUsagePanel: true))
+        XCTAssertFalse(try XCTUnwrap(queue.current).inUsagePanel)
+        XCTAssertEqual(queue.remove(id: "b").next?.id, reply.id)
+    }
+
+    func testSessionEventsShareAStandaloneSurfaceWithoutSharingPersistence() throws {
+        let permission = IslandAlert.permission(request("a"))
+        let reply = completion()
+        XCTAssertTrue(permission.isPersistent)
+        XCTAssertFalse(reply.isPersistent, "A finished reply must not become an unresolved approval")
+        for event in [permission, reply] {
+            let queue = IslandAlertQueue()
+            XCTAssertTrue(event.isSessionEvent)
+            XCTAssertEqual(event.detailWidth, 470)
+            XCTAssertEqual(try XCTUnwrap(event.detailInsets).top, 32)
+            XCTAssertTrue(queue.show(event, inUsagePanel: true))
+            XCTAssertFalse(try XCTUnwrap(queue.current).inUsagePanel,
+                           "An open usage panel cannot turn a session event into an inline message")
+        }
+    }
+
+    func testSelectingAReplyKeepsThePermissionWaitingAndUsesTheEventSurface() throws {
+        let queue = IslandAlertQueue()
+        let quota = IslandAlert.quota(QuotaAlert.preview(.reset, agent: DemoData.agents[0]))
+        let permission = IslandAlert.permission(request("a"))
+        let reply = completion()
+        XCTAssertTrue(queue.show(quota, inUsagePanel: true))
+        XCTAssertFalse(queue.show(permission, inUsagePanel: true))
+        XCTAssertFalse(queue.show(reply, inUsagePanel: true))
+        XCTAssertEqual(queue.pendingIDs, [permission.id, reply.id])
+        XCTAssertTrue(queue.promote(id: reply.id))
+        XCTAssertEqual(queue.current?.alert.id, reply.id)
+        XCTAssertFalse(try XCTUnwrap(queue.current).inUsagePanel,
+                       "Selecting an event must not inherit the previous quota card's inline surface")
+        XCTAssertEqual(queue.questions.map(\.id), [permission.id])
+        XCTAssertEqual(queue.sessionEvents.map(\.id), [reply.id, permission.id])
+        XCTAssertEqual(queue.dismiss()?.id, permission.id)
     }
 
     func testAWithdrawnRequestIsTakenOutOfTheQueueWhereverItIs() {
@@ -111,9 +155,9 @@ final class PermissionAlertTests: XCTestCase {
 
         draft.pick(1, of: 0, in: one)
         draft.pick(0, of: 0, in: one)
-        XCTAssertEqual(draft.answer(0, of: one), "Push", "a single answer replaces the one before it")
+        XCTAssertEqual(draft.answer(0, of: one), .init(selected: ["Push"]), "a single answer replaces the one before it")
         draft.type("Push tomorrow", of: 0, in: one)
-        XCTAssertEqual(draft.answer(0, of: one), "Push tomorrow", "writing one's own answer sets the offered ones aside")
+        XCTAssertEqual(draft.answer(0, of: one), .init(custom: "Push tomorrow"), "writing one's own answer sets the offered ones aside")
         draft.type("  ", of: 0, in: one)
         XCTAssertNil(draft.answer(0, of: one), "blank words are no answer")
         draft.pick(1, of: 0, in: one)
@@ -125,12 +169,26 @@ final class PermissionAlertTests: XCTestCase {
         draft.pick(0, of: 1, in: many)
         draft.type("Settings", of: 1, in: many)
         XCTAssertEqual(draft.answers(for: [one, many]),
-                       ["Push now?": "Wait", "Which pages?": "Channels, Documents, Settings"],
+                       ["Push now?": .init(selected: ["Wait"]),
+                        "Which pages?": .init(selected: ["Channels", "Documents"], custom: "Settings")],
                        "several answers keep the order they were offered in, the user's own words last")
         draft.pick(0, of: 1, in: many)
-        XCTAssertEqual(draft.answer(1, of: many), "Documents, Settings", "picking again takes it back")
+        XCTAssertEqual(draft.answer(1, of: many), .init(selected: ["Documents"], custom: "Settings"), "picking again takes it back")
         draft.skip(1)
-        XCTAssertEqual(draft.answers(for: [one, many]), ["Push now?": "Wait"], "a skipped question is left out")
+        XCTAssertEqual(draft.answers(for: [one, many]), ["Push now?": .init(selected: ["Wait"])], "a skipped question is left out")
+    }
+
+    func testQuestionAnswersKeepIdentityChoicesAndCustomWordsSeparate() {
+        let one = PermissionQuestion(id: "one", question: "Choose", options: [.init(label: "CSV, JSON")])
+        let two = PermissionQuestion(id: "two", question: "Choose", options: [.init(label: "A")], multiSelect: true)
+        let draft = QuestionDraft()
+        draft.pick(0, of: 0, in: one)
+        draft.pick(0, of: 1, in: two)
+        draft.type("A, but later", of: 1, in: two)
+        XCTAssertEqual(draft.answers(for: [one, two]), [
+            "one": .init(selected: ["CSV, JSON"]),
+            "two": .init(selected: ["A"], custom: "A, but later"),
+        ])
     }
 }
 

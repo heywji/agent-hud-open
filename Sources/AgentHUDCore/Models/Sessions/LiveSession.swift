@@ -17,14 +17,22 @@ public struct LiveSession: Hashable, Codable, Sendable, Identifiable {
     public let cacheReadTokens: Int
     public let client: String?
     public let transcriptPath: String?
+    /// The canonical ledger contribution when another provider meters this session; nil uses its transcript and id.
+    public let usageKey: String?
     public let accountWide: Bool
     /// The directory the session works in; `terminal` names its last component.
     public let workingDirectory: String?
     /// Logs of the sub-agents this session started that do not lie under its own log's directory, such as Codex's.
     public let subagentTranscripts: [String]?
+    /// The readable name assigned to a spawned agent by its source.
+    public let agentName: String?
+    /// The agents this session directly started, each with its own descendants.
+    public let subagentSessions: [LiveSession]?
     /// When the session's source last recorded anything for it, a log's last line or newest event, where the provider
     /// reads that. Unlike `observedAt`, reading the log again does not move it.
     public let lastActivityAt: Date?
+    /// Source-owned destination for returning to this session on this Mac; never encoded in a session report.
+    public let navigationTarget: SessionNavigationTarget?
 
     public init(
         id: String,
@@ -43,7 +51,11 @@ public struct LiveSession: Hashable, Codable, Sendable, Identifiable {
         observedAt: Date? = nil,
         workingDirectory: String? = nil,
         subagentTranscripts: [String]? = nil,
-        lastActivityAt: Date? = nil
+        agentName: String? = nil,
+        subagentSessions: [LiveSession]? = nil,
+        lastActivityAt: Date? = nil,
+        navigationTarget: SessionNavigationTarget? = nil,
+        usageKey: String? = nil
     ) {
         self.id = id
         self.agentId = agentId
@@ -58,10 +70,14 @@ public struct LiveSession: Hashable, Codable, Sendable, Identifiable {
         self.cacheReadTokens = cacheReadTokens
         self.client = client
         self.transcriptPath = transcriptPath
+        self.usageKey = usageKey
         self.accountWide = accountWide
         self.workingDirectory = workingDirectory
         self.subagentTranscripts = subagentTranscripts.flatMap { $0.isEmpty ? nil : $0 }
+        self.agentName = agentName
+        self.subagentSessions = subagentSessions.flatMap { $0.isEmpty ? nil : $0 }
         self.lastActivityAt = lastActivityAt
+        self.navigationTarget = navigationTarget
     }
 
     /// Whether the source that read this session said a turn was still in flight. The log's own silence does not end
@@ -77,7 +93,7 @@ public struct LiveSession: Hashable, Codable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, agentId, task, terminal, startedAt, endedAt, observedAt, pctOfWindow, tokensIn, tokensOut, client, transcriptPath, cacheReadTokens, accountWide
-        case workingDirectory, subagentTranscripts, lastActivityAt
+        case workingDirectory, subagentTranscripts, agentName, subagentSessions, lastActivityAt, usageKey
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -92,7 +108,15 @@ public struct LiveSession: Hashable, Codable, Sendable, Identifiable {
             observedAt: try c.decodeIfPresent(Date.self, forKey: .observedAt),
             workingDirectory: try c.decodeIfPresent(String.self, forKey: .workingDirectory),
             subagentTranscripts: try c.decodeIfPresent([String].self, forKey: .subagentTranscripts),
-            lastActivityAt: try c.decodeIfPresent(Date.self, forKey: .lastActivityAt))
+            agentName: try c.decodeIfPresent(String.self, forKey: .agentName),
+            subagentSessions: try c.decodeIfPresent([LiveSession].self, forKey: .subagentSessions),
+            lastActivityAt: try c.decodeIfPresent(Date.self, forKey: .lastActivityAt),
+            usageKey: try c.decodeIfPresent(String.self, forKey: .usageKey))
+    }
+
+    /// Every descendant, in the order of the tree; the top-level session list keeps only the roots.
+    public var descendantSessions: [LiveSession] {
+        (subagentSessions ?? []).flatMap { [$0] + $0.descendantSessions }
     }
 
     /// The working directory with the home folder written as `~`, or the project's name where only that is known.

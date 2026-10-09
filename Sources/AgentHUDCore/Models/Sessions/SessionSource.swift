@@ -4,14 +4,16 @@ import Foundation
 public struct SessionSource: Hashable, Sendable {
     /// Execution clients, independent of billing services and the models used inside each client.
     public static let agentVendors = ["Claude", "Codex", "DeepSeek"]
-        + AdditionalSource.allCases.map(\.vendor)
+        + AdditionalSource.allCases.flatMap { $0 == .grok ? ["Grok CLI", "Grok Bot"] : [$0.vendor] }
         + OpenAgentSource.allCases.filter { $0 != .glm }.map(\.name)
 
+    /// The provider that owns the execution session; its billing events may belong to a different provider.
     public let vendor: String?
     private let client: String?
 
     public init(vendor: String?, client: String?) {
-        self.vendor = vendor
+        // Cursor meters Bot calls, but the native session and its transcript still belong to Grok.
+        self.vendor = vendor == "Cursor" && client == "Grok Bot" ? "Grok" : vendor
         switch vendor {
         case "Codex":
             switch client {
@@ -22,9 +24,19 @@ public struct SessionSource: Hashable, Sendable {
         case "Claude":
             // Builds before entrypoint detection, and synced peers still on them, carry the plain product name.
             self.client = client == ClaudeEntrypoint.defaultLabel ? nil : client
+        case "Grok":
+            // Existing Grok sessions came from the CLI before another client had to be distinguished.
+            self.client = client ?? "Grok CLI"
         default:
             self.client = client
         }
+    }
+
+    /// The execution agent whose live-status switch and artwork this session uses. Grok's clients remain separate
+    /// agents even when Cursor supplies Bot billing events. Unknown client names stay as written.
+    public var agentVendor: String? {
+        if vendor == "Grok" { return client }
+        return vendor
     }
 
     public var name: String {

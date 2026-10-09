@@ -1,5 +1,6 @@
 import AppKit
 import AgentHUDCore
+import SwiftUI
 
 /// Owns the local desktop presentation and observes the supplied usage store.
 @MainActor
@@ -8,12 +9,16 @@ public final class DesktopApplication {
     public let store: UsageStore
     private let options: DesktopLaunchOptions
     private let additionalSettingsPages: [DesktopSettingsPage]
+    private let additionalMenuItems: () -> [NSMenuItem]
+    private let additionalHUDControls: @MainActor (@escaping @MainActor () -> Void) -> AnyView
     private let onIslandEvents: ((IslandEventTracker.Update, UsageReport, Date) -> Void)?
     private var islandEvents = IslandEventTracker()
     /// The requests already on the island, so a change to the waiting list says which ones arrived and which left.
     private var shownRequests: [String] = []
     /// The clients whose observer directory existed at the last look, so one that appears later is noticed.
     private var observedClients: Set<String> = []
+    private let antigravityApprovals = AntigravityPermissionObserver()
+    private let deepseekQuestions = DeepSeekQuestionObserver()
     private var notch: IslandController?
     private var statusItem: StatusItemController?
     private lazy var settingsWindow = SettingsWindowController(
@@ -26,11 +31,15 @@ public final class DesktopApplication {
     /// found nothing, with the report and time the check used.
     public init(options: DesktopLaunchOptions, settings: SettingsStore, store: UsageStore,
                 additionalSettingsPages: [DesktopSettingsPage] = [],
+                additionalMenuItems: @escaping () -> [NSMenuItem] = { [] },
+                additionalHUDControls: @escaping @MainActor (@escaping @MainActor () -> Void) -> AnyView = { _ in AnyView(EmptyView()) },
                 onIslandEvents: ((IslandEventTracker.Update, UsageReport, Date) -> Void)? = nil) {
         self.options = options
         self.settings = settings
         self.store = store
         self.additionalSettingsPages = additionalSettingsPages
+        self.additionalMenuItems = additionalMenuItems
+        self.additionalHUDControls = additionalHUDControls
         self.onIslandEvents = onIslandEvents
         onboardingWindow = OnboardingWindowController(settings: settings, store: store,
             sources: options.demo ? { DemoData.sources } : { SourceDetector.detect() })
@@ -42,12 +51,14 @@ public final class DesktopApplication {
     }
 
     public func start() {
+        let sources = options.demo ? DemoData.sources : SourceDetector.resolve(SourceDetector.detect(), report: store.report)
+        settings.update { $0.applyLiveStatusDefaults(sources: sources) }
         applyAppearance()
-        let notch = IslandController(store: store, settings: settings)
+        let notch = IslandController(store: store, settings: settings, additionalHUDControls: additionalHUDControls)
         notch.onOpenStats = { [weak self] in self?.showStats() }
         notch.onOpenSettings = { [weak self] in self?.showSettings() }
         self.notch = notch
-        let statusItem = StatusItemController(store: store, settings: settings)
+        let statusItem = StatusItemController(store: store, settings: settings, additionalMenuItems: additionalMenuItems)
         statusItem.actions = MenuActions(
             toggleGlow: { [weak self] in self?.toggleGlow() },
             openSettings: { [weak self] in self?.showSettings() },
@@ -98,6 +109,8 @@ public final class DesktopApplication {
         }, onChange: { [weak self] in
             guard let self, !self.options.demo, let executable = Bundle.main.executableURL else { return }
             SessionObservers.configure(executable: executable, enabled: self.settings.settings.clientHooks)
+            self.antigravityApprovals.setEnabled(self.settings.settings.clientHooks)
+            self.deepseekQuestions.setEnabled(self.settings.settings.clientHooks)
         })
         // A client run for the first time creates its directory, and its observer goes in with the next report
         // rather than at the next launch.
@@ -115,6 +128,10 @@ public final class DesktopApplication {
                        onChange: { [weak self] in self?.syncPermissionRequests() })
         // Seeded after the island is listening, so the demo's requests arrive the way a client's would.
         if options.demo { PermissionRequests.shared.seedDemo() } else { PermissionRequests.shared.start() }
+        if !options.demo {
+            antigravityApprovals.setEnabled(settings.settings.clientHooks)
+            deepseekQuestions.setEnabled(settings.settings.clientHooks)
+        }
         store.start()
         if options.openPanel { notch.forceOpen() }
         if store.isAccessAllowed, options.showOnboarding || !settings.hasCompletedOnboarding { showOnboarding() }
@@ -123,6 +140,8 @@ public final class DesktopApplication {
     }
 
     public func stop() {
+        antigravityApprovals.stop()
+        deepseekQuestions.stop()
         // Quitting must never leave a client waiting on an answer that is no longer coming.
         PermissionRequests.shared.stop()
         store.stop()

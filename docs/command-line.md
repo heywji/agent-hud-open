@@ -29,6 +29,7 @@ Only one Agent HUD runs at a time, whichever application built on these librarie
 | `--probe-open-agents` | Indexes the last seven days of local OpenCode, Kimi and Pi sessions and prints, per client, the session count, running count, distinct usage events, In / Out / Cache totals and the read status. No network requests, no transcript text, no credentials in the output. |
 | `AGENT_HUD_PROBE_ADDITIONAL=1 swift test --filter AdditionalProviderTests/testInstalledSourcesReadOnlyProbe` | Read-only probe of the installed Antigravity, Cursor and Grok sources from the test suite; the test is skipped unless the variable is set. |
 | `AGENT_HUD_PROBE_GROK=1 swift test --filter AdditionalProviderTests/testInstalledGrokLocalUsageReadOnlyProbe` | Local Grok token totals after merging inference and completed-turn logs, alongside turn-log totals. No network requests or conversation text; skipped unless enabled. |
+| `AGENT_HUD_PROBE_ANTIGRAVITY=1 swift test --filter AntigravityPermissionsTests/testInstalledAntigravityPermissionsReadOnlyProbe` | Reads Antigravity's native waiting permissions and prints their count. Sends no approval or rejection and prints no command, conversation text or credential. |
 
 ## Adapter commands
 
@@ -36,6 +37,7 @@ Only one Agent HUD runs at a time, whichever application built on these librarie
 | --- | --- |
 | `--install-pi-observer` | Write or update the Agent HUD extension `extensions/agent-hud.ts` under the Pi directory (`PI_CODING_AGENT_DIR`, default `~/.pi/agent`), then exit. Existing Pi sessions need `/reload` once. A same-named file that is not Agent HUD's is left alone and the command fails. |
 | `--attention-hook claude` | The handler Claude Code invokes for a notification: reads the payload from standard input, records the session's pending request, prints `{}` and exits 0 even when recording fails. |
+| `--session-origin-hook codex\|claude` | Records the native session ID, host type, observation time and optional terminal destination at session start or prompt submission. Prints `{}` and exits 0 even when recording fails; it produces no completion, starts no interface and queries no account. |
 | `--permission-hook claude\|codex\|qoder\|qoderCN\|qoderWork\|codebuddy\|workbuddy\|zcode\|qwen` | The handler the client invokes when it is about to ask whether a tool may run: forwards the payload to the running application and waits, prints back the decision the user gave, and exits 0. Codex CLI and Desktop share the `codex` handler. Prints nothing — leaving the client's own permission flow untouched — when the application is not running, the payload cannot be read, nobody answers before the client stops waiting, or Claude Code's session record shows the call was answered in Claude Code itself. It never initializes the interface or queries an account. |
 | `--install-completion-hook antigravity\|cursor\|copilot\|codebuddy\|qwen` | Point the client's stop hook at this executable, adding it when it is missing; an Agent HUD handler already there, whichever copy wrote it, is taken over. Other hooks in the client's configuration are preserved. Fails, changing nothing, when this executable runs from a disk image or a translocated copy. |
 | `--completion-hook antigravity\|cursor\|copilot\|codebuddy\|qwen` | The handler the clients invoke: reads the hook payload from standard input, stores a completion record when the payload describes a successful stop, prints `{"decision":"stop"}` for Antigravity or `{}` for the others, and exits 0 even when recording fails. It never initializes the interface or queries an account. |
@@ -49,6 +51,7 @@ Normal start-up already runs `SessionObservers.configure(executable:enabled:)` f
 | `SWIFT_SCRATCH_PATH` | Passed to `swift build` as `--scratch-path` by the build script |
 | `AGENTHUD_SNAPSHOT_PREFIX` | Limits `--snapshot` to snapshots whose name starts with the prefix |
 | `AGENT_HUD_PROBE_ADDITIONAL` | Enables the read-only probe test above |
+| `AGENT_HUD_PROBE_ANTIGRAVITY` | Enables the read-only native permission probe above |
 | Client home overrides and provider keys (`CODEX_HOME`, `DSH_HOME`, `PI_CODING_AGENT_DIR`, …) | Read from the process environment ([providers](providers.md)); a directory variable that is empty or only whitespace counts as unset. An application started from Finder or Launch Services inherits the login session's environment, not the exports of a terminal shell. |
 
 ## Code map

@@ -101,7 +101,7 @@ final class PermissionHookTests: XCTestCase, @unchecked Sendable {
 
     func testEachForkIsFoundInItsOwnHome() throws {
         let home = try directory()
-        for source in PermissionHooks.Source.allCases {
+        for source in PermissionHooks.Source.allCases where source.usesHook {
             XCTAssertFalse(source.isInstalled(home: home), "a machine without the client keeps its home untouched")
         }
         try FileManager.default.createDirectory(at: home.appendingPathComponent(".qoder"), withIntermediateDirectories: true)
@@ -168,7 +168,7 @@ final class PermissionHookTests: XCTestCase, @unchecked Sendable {
                       URL(fileURLWithPath: "/private/var/folders/x1/T/AppTranslocation/5D1C/d/Agent HUD.app/Contents/MacOS/Agent HUD"),
                       URL(fileURLWithPath: "/Volumes/Agent HUD/Agent HUD.app/Contents/MacOS/Agent HUD"),
                       URL(fileURLWithPath: "/Users/me/.Trash/Agent HUD.app/Contents/MacOS/Agent HUD")]
-        for source in PermissionHooks.Source.allCases {
+        for source in PermissionHooks.Source.allCases where source.usesHook {
             let home = try directory(), file = source.configuration(home: home)
             let ours = { HookCommand.make(executable: $0, arguments: "--permission-hook \(source.rawValue)") }
             let installed = { PermissionHooks.commands(in: try PermissionHooks.configuration(source, home: home), source: source) }
@@ -201,6 +201,44 @@ final class PermissionHookTests: XCTestCase, @unchecked Sendable {
         }
         XCTAssertEqual(PermissionHooks.Source.codex.configuration(home: home),
                        CodexLocator.dataDirectory(home: home).appendingPathComponent("hooks.json"))
+    }
+
+    func testAntigravityNativeApprovalsNeverInstallPermissionHooks() throws {
+        let home = try directory(), source = PermissionHooks.Source.antigravity
+        XCTAssertFalse(source.isInstalled(home: home), "a system app outside this home does not establish local sessions")
+        XCTAssertEqual(source.vendor, "Antigravity")
+        XCTAssertEqual(source.sessionID("conversation"), "antigravity:conversation")
+        XCTAssertFalse(source.usesHook)
+        XCTAssertFalse(source.supportsPermissionUpdates)
+        XCTAssertFalse(source.recordsCalls)
+        XCTAssertTrue(source.unanswerableTools.isEmpty)
+
+        let conversations = AntigravitySessions.home(home).appendingPathComponent("antigravity-cli/conversations")
+        try FileManager.default.createDirectory(at: conversations, withIntermediateDirectories: true)
+        XCTAssertTrue(source.isInstalled(home: home))
+        let file = source.configuration(home: home), executable = URL(fileURLWithPath: "/tmp/hud")
+        XCTAssertEqual(file, CompletionHooks.Source.antigravity.configuration(home: home))
+        for enabled in [true, false] {
+            try PermissionHooks.configure(source, enabled: enabled, executable: executable, home: home)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        }
+
+        let original = Data(#"{"hooks":"native configuration"}"#.utf8)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try original.write(to: file)
+        for enabled in [true, false] {
+            try PermissionHooks.configure(source, enabled: enabled, executable: executable, home: home)
+            XCTAssertEqual(try Data(contentsOf: file), original)
+        }
+        let object = try XCTUnwrap(try ProviderJSON.read(original).objectValue)
+        XCTAssertEqual(try PermissionHooks.updating(object, source: source, command: "'/tmp/hud' --permission-hook antigravity"), object)
+        XCTAssertEqual(try PermissionHooks.configuration(source, home: home), [:])
+        XCTAssertTrue(PermissionHooks.commands(in: object, source: source).isEmpty)
+        XCTAssertFalse(PermissionHooks.isActive(source, home: home))
+    }
+
+    func testAntigravityPermissionHookCommandExitsWithoutStartingTheApp() {
+        XCTAssertEqual(HookEntry.handle(arguments: ["/tmp/hud", "--permission-hook", "antigravity"]), 0)
     }
 
     func testClaudeAndAntigravityHooksFollowTheDirectoriesTheirReadersFollow() throws {
@@ -344,11 +382,31 @@ final class PermissionHookTests: XCTestCase, @unchecked Sendable {
         }
     }
 
-    func testZCodeQuestionsAndPlansStayInItsOwnDialog() throws {
-        for tool in ["AskUserQuestion", "ExitPlanMode"] {
-            XCTAssertNil(try PermissionRequest.parse(JSONSerialization.data(withJSONObject: payload(tool: tool, input: [:])),
-                                                     source: .zcode, id: tool, now: now))
-        }
+    func testZCodeQuestionsAreAnsweredOnTheHUDAndItsPlanStaysInItsOwnDialog() throws {
+        XCTAssertNil(try PermissionRequest.parse(JSONSerialization.data(withJSONObject: payload(tool: "ExitPlanMode", input: ["plan": "## Ship"])),
+                                                 source: .zcode, id: "ExitPlanMode", now: now),
+                     "an answer to a plan approves it unread, so ZCode reads plans itself")
+
+        let data = try JSONSerialization.data(withJSONObject: payload(tool: "AskUserQuestion",
+                                                                      input: ["questions": questions, "metadata": ["source": "x"]]))
+        let request = try XCTUnwrap(try PermissionRequest.parse(data, source: .zcode, id: "q", now: now))
+        XCTAssertTrue(request.isQuestion)
+        XCTAssertEqual([request.vendor, request.sessionID], ["ZCode", "zcode:s"])
+        XCTAssertEqual(request.questions.map(\.question), ["Push the 40 commits now?", "Which pages report it?"])
+        XCTAssertEqual([request.badge, request.summary], ["ASK", "Push the 40 commits now?"])
+
+        // ZCode reads the answers back inside the question's own input, the same shape Claude Code reads them in.
+        let answers: [String: PermissionQuestion.Answer] = ["Push the 40 commits now?": .init(selected: ["Push"]),
+                                                            "Which pages report it?": .init(selected: ["Channels", "Documents"])]
+        let decision = try ProviderJSON.read(PermissionDecision.answer(answers).response(for: request))["hookSpecificOutput"]["decision"]
+        XCTAssertEqual(decision["behavior"].stringValue, "allow")
+        XCTAssertEqual(decision["updatedInput"]["questions"], try ProviderJSON.read(JSONSerialization.data(withJSONObject: questions)),
+                       "ZCode reads the questions back beside their answers")
+        XCTAssertEqual(decision["updatedInput"]["metadata"]["source"].stringValue, "x", "the rest of the call is left as it was")
+        XCTAssertEqual(decision["updatedInput"]["answers"], .object(answers.mapValues { .string($0.text) }))
+        let skipped = try ProviderJSON.read(PermissionDecision.answer([:]).response(for: request))["hookSpecificOutput"]["decision"]
+        XCTAssertEqual(skipped["updatedInput"]["answers"], .object([:]), "ZCode reads it as the questions left open")
+
         let shell = try XCTUnwrap(try PermissionRequest.parse(JSONSerialization.data(withJSONObject: payload()),
                                                              source: .zcode, id: "shell", now: now))
         XCTAssertEqual(shell.vendor, "ZCode")
@@ -455,13 +513,14 @@ final class PermissionHookTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(request.questions.map(\.multiSelect), [false, true])
         XCTAssertEqual([request.badge, request.summary], ["ASK", "Push the 40 commits now?"])
 
-        let answers = ["Push the 40 commits now?": "Push", "Which pages report it?": "Channels, Documents"]
+        let answers: [String: PermissionQuestion.Answer] = ["Push the 40 commits now?": .init(selected: ["Push"]),
+                                                            "Which pages report it?": .init(selected: ["Channels", "Documents"])]
         let decision = try ProviderJSON.read(PermissionDecision.answer(answers).response(for: request))["hookSpecificOutput"]["decision"]
         XCTAssertEqual(decision["behavior"].stringValue, "allow")
         XCTAssertEqual(decision["updatedInput"]["questions"], try ProviderJSON.read(JSONSerialization.data(withJSONObject: questions)),
                        "Claude Code reads the questions back beside their answers")
         XCTAssertEqual(decision["updatedInput"]["metadata"]["source"].stringValue, "x", "the rest of the call is left as it was")
-        XCTAssertEqual(decision["updatedInput"]["answers"], .object(answers.mapValues { .string($0) }))
+        XCTAssertEqual(decision["updatedInput"]["answers"], .object(answers.mapValues { .string($0.text) }))
         XCTAssertTrue(PermissionDecision.answer(answers).response(for: .claude).isEmpty, "answers need the question they answer")
         let skipped = try ProviderJSON.read(PermissionDecision.answer([:]).response(for: request))["hookSpecificOutput"]["decision"]
         XCTAssertEqual(skipped["behavior"].stringValue, "allow", "skipping every question is not a refusal")

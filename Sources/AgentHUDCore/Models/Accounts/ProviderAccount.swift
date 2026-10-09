@@ -59,6 +59,8 @@ public struct AccountObservation: Hashable, Codable, Sendable, Identifiable {
     public let account: ProviderAccount
     /// `ClientHome.key` of the directory the client was read from; empty for the client's default home.
     public let home: String
+    /// The client that owns the account's reading; its provider determines the subscription group and account identity.
+    public let client: String
     /// An email or name the provider already returned, shown only to this Mac's user.
     public let label: String?
     public let plan: String?
@@ -76,12 +78,16 @@ public struct AccountObservation: Hashable, Codable, Sendable, Identifiable {
     /// Keys this account was filed under while its identity was incomplete, such as a Codex workspace read without its
     /// email. Last readings under them are this account's own and leave once it is read.
     public let aliases: [String]?
+    /// The provider explicitly listed every enabled quota window for this account, using account-scoped row ids.
+    /// Nil is an incremental or failed reading; an empty set explicitly confirms that no windows remain.
+    public let quotaWindowIDs: Set<String>?
 
-    public init(account: ProviderAccount, home: String = "", label: String? = nil, plan: String? = nil,
+    public init(account: ProviderAccount, home: String = "", client: String? = nil, label: String? = nil, plan: String? = nil,
                 observedAt: Date, isCurrent: Bool = true, quotaNotice: String? = nil, readingIssue: ReadingIssue? = nil,
-                resetCredits: CodexResetCredits? = nil, aliases: [String]? = nil) {
+                resetCredits: CodexResetCredits? = nil, aliases: [String]? = nil, quotaWindowIDs: Set<String>? = nil) {
         self.account = account
         self.home = home
+        self.client = client ?? (account.provider == "Codex" && home.hasPrefix("pi:") ? "Pi" : account.provider)
         self.label = label.flatMap { $0.isEmpty ? nil : $0 }
         self.plan = plan.flatMap { $0.isEmpty ? nil : $0 }
         self.observedAt = observedAt
@@ -90,14 +96,32 @@ public struct AccountObservation: Hashable, Codable, Sendable, Identifiable {
         self.readingIssue = readingIssue
         self.resetCredits = resetCredits
         self.aliases = aliases.flatMap { $0.isEmpty ? nil : $0 }
+        self.quotaWindowIDs = quotaWindowIDs
     }
 
     public var id: String { account.id + "@" + home }
 
     public func with(isCurrent: Bool) -> AccountObservation {
-        AccountObservation(account: account, home: home, label: label, plan: plan, observedAt: observedAt,
+        AccountObservation(account: account, home: home, client: client, label: label, plan: plan, observedAt: observedAt,
                            isCurrent: isCurrent, quotaNotice: quotaNotice, readingIssue: readingIssue, resetCredits: resetCredits,
-                           aliases: aliases)
+                           aliases: aliases, quotaWindowIDs: quotaWindowIDs)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case account, home, client, label, plan, observedAt, isCurrent, quotaNotice, readingIssue, resetCredits, aliases, quotaWindowIDs
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(account: try values.decode(ProviderAccount.self, forKey: .account),
+            home: try values.decode(String.self, forKey: .home), client: try values.decodeIfPresent(String.self, forKey: .client),
+            label: try values.decodeIfPresent(String.self, forKey: .label), plan: try values.decodeIfPresent(String.self, forKey: .plan),
+            observedAt: try values.decode(Date.self, forKey: .observedAt), isCurrent: try values.decode(Bool.self, forKey: .isCurrent),
+            quotaNotice: try values.decodeIfPresent(String.self, forKey: .quotaNotice),
+            readingIssue: try values.decodeIfPresent(ReadingIssue.self, forKey: .readingIssue),
+            resetCredits: try values.decodeIfPresent(CodexResetCredits.self, forKey: .resetCredits),
+            aliases: try values.decodeIfPresent([String].self, forKey: .aliases),
+            quotaWindowIDs: try values.decodeIfPresent(Set<String>.self, forKey: .quotaWindowIDs))
     }
 
     /// The account's email or name, else a short form of its id.

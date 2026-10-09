@@ -8,6 +8,9 @@ import AgentHUDCore
 final class GlowWindowController {
     let panel: OverlayPanel
     private let host = NSView()
+    /// Render every material in the existing top-edge coordinate space, then turn the canvas toward the
+    /// chosen edge. This keeps the soft bitmap, grid shaders, alerts and shadow on one orientation.
+    private let materialCanvas = CALayer()
     let glowLayer = CALayer()
     let shadowLayer = CALayer()
     private let alertLayer = CALayer()
@@ -23,14 +26,14 @@ final class GlowWindowController {
     private var restingKey: GlowFrameRenderer.Key?
     /// The soft glow's resting bitmap, restored when a frame-by-frame effect stops.
     private var softStill: CGImage?
-    private let frames = GlowFrameCache()
+    private var frameRenderer: GlowFrameRenderer?
     private lazy var animator = GlowAnimator(host: host, layer: glowLayer)
     var isAnimating: Bool { animator.isRunning }
 
     static let panelWidth: CGFloat = 1000
 
     /// Inputs of the soft glow bitmap.
-    private struct SoftKey: Hashable {
+    fileprivate struct SoftKey: Hashable, Sendable {
         let glow: GlowGeometry
         let islandSize: CGSize
         let islandRadius: CGFloat
@@ -39,7 +42,7 @@ final class GlowWindowController {
         let scale: CGFloat
     }
 
-    private struct ShadowKey: Hashable {
+    fileprivate struct ShadowKey: Hashable, Sendable {
         let size: CGSize
         let radius: CGFloat
         let scale: CGFloat
@@ -52,6 +55,27 @@ final class GlowWindowController {
         let breathSeconds: Double
     }
 
+    /// Materials for one pending opening. The hover owner retains these until the panel opens or the pointer leaves.
+    struct PreparedImages: Sendable {
+        fileprivate let softKey: SoftKey
+        let soft: GlowImage?
+        fileprivate let shadowKey: ShadowKey
+        let shadow: GlowImage?
+        let renderer: GlowFrameRenderer?
+        let resting: GlowImage?
+    }
+
+    /// Screen, accessibility and font queries happen before this value is handed to the raster worker.
+    struct PreparationInputs: Sendable {
+        fileprivate let softKey: SoftKey
+        fileprivate let shadowKey: ShadowKey
+        fileprivate let rendersSoft: Bool
+        fileprivate let rendersShadow: Bool
+        fileprivate let rendererKey: GlowFrameRenderer.Key?
+        fileprivate let glyphs: GlyphSet?
+        fileprivate let rendersResting: Bool
+    }
+
     init(geometry: NotchGeometry) {
         panel = OverlayPanel(frame: Self.panelFrame(for: geometry), level: .statusBar, acceptsMouse: false)
         panel.setAccessibilityElement(false)
@@ -59,11 +83,12 @@ final class GlowWindowController {
         host.wantsLayer = true
         host.layer?.masksToBounds = true
         panel.contentView = host
+        host.layer?.addSublayer(materialCanvas)
         for layer in [shadowLayer, glowLayer, alertLayer] {
             layer.contentsGravity = .resize
             layer.contentsScale = geometry.backingScale
             layer.anchorPoint = .zero
-            host.layer?.addSublayer(layer)
+            materialCanvas.addSublayer(layer)
         }
         shadowLayer.opacity = 0
         alertLayer.opacity = 0
@@ -102,26 +127,136 @@ final class GlowWindowController {
     /// Keeps a backdrop to `column`, dying away over `margin` on each side. Passing no column removes the
     /// mask: an island that has grown — for an event, or because the panel opened — wants its whole rim,
     /// not the slice of it that fits the marks' column.
-    private func updateEdgeFade(column: CGRect?, margin: CGFloat, panel: CGRect) {
-        guard let column, panel.width > 0 else {
+    private func updateEdgeFade(column: CGRect?, margin: CGFloat, panel: CGRect, edge: HUDEdge) {
+        let horizontal = edge.isHorizontal
+        let length = horizontal ? panel.width : panel.height
+        guard let column, length > 0 else {
             if host.layer?.mask != nil { host.layer?.mask = nil }
             return
         }
         let bounds = CGRect(origin: .zero, size: panel.size)
-        func stop(_ x: CGFloat) -> NSNumber { NSNumber(value: Double(min(1, max(0, (x - panel.minX) / panel.width)))) }
+        let start = horizontal ? panel.minX : panel.minY
+        let lower = horizontal ? column.minX : column.minY
+        let upper = horizontal ? column.maxX : column.maxY
+        func stop(_ coordinate: CGFloat) -> NSNumber {
+            NSNumber(value: Double(min(1, max(0, (coordinate - start) / length))))
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         edgeFade.frame = bounds
-        edgeFade.startPoint = CGPoint(x: 0, y: 0.5)
-        edgeFade.endPoint = CGPoint(x: 1, y: 0.5)
+        edgeFade.startPoint = horizontal ? CGPoint(x: 0, y: 0.5) : CGPoint(x: 0.5, y: 0)
+        edgeFade.endPoint = horizontal ? CGPoint(x: 1, y: 0.5) : CGPoint(x: 0.5, y: 1)
         edgeFade.colors = [
             CGColor(gray: 0, alpha: 0), CGColor(gray: 0, alpha: 1),
             CGColor(gray: 0, alpha: 1), CGColor(gray: 0, alpha: 0),
         ]
-        edgeFade.locations = [stop(column.minX - margin), stop(column.minX),
-                              stop(column.maxX), stop(column.maxX + margin)]
+        edgeFade.locations = [stop(lower - margin), stop(lower), stop(upper), stop(upper + margin)]
         if host.layer?.mask !== edgeFade { host.layer?.mask = edgeFade }
         CATransaction.commit()
+    }
+
+    /// The island expressed with its parked edge at the top. For vertical queues, increasing x follows
+    /// the marks from top to bottom, preserving agent colours in the same order as their logos.
+    nonisolated static func canonicalIslandFrame(_ island: CGRect, panel: CGRect, edge: HUDEdge) -> CGRect {
+        let local = island.offsetBy(dx: -panel.minX, dy: -panel.minY)
+        switch edge {
+        case .top: return local
+        case .bottom:
+            return CGRect(x: local.minX, y: panel.height - local.maxY, width: local.width, height: local.height)
+        case .left:
+            return CGRect(x: panel.height - local.maxY, y: panel.width - local.maxX,
+                          width: local.height, height: local.width)
+        case .right:
+            return CGRect(x: panel.height - local.maxY, y: local.minX,
+                          width: local.height, height: local.width)
+        }
+    }
+
+    private func orientCanvas(in frame: CGRect, edge: HUDEdge) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        materialCanvas.bounds = CGRect(origin: .zero, size: edge.isHorizontal
+            ? frame.size : CGSize(width: frame.height, height: frame.width))
+        materialCanvas.position = CGPoint(x: frame.width / 2, y: frame.height / 2)
+        let transform: CGAffineTransform
+        switch edge {
+        case .top: transform = .identity
+        case .bottom: transform = CGAffineTransform(scaleX: 1, y: -1)
+        case .left: transform = CGAffineTransform(a: 0, b: -1, c: -1, d: 0, tx: 0, ty: 0)
+        case .right: transform = CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: 0)
+        }
+        materialCanvas.setAffineTransform(transform)
+        CATransaction.commit()
+    }
+
+    /// Prepares the open panel while its hover delay runs, leaving the collapsed HUD and its animation untouched.
+    func prepare(
+        geometry: NotchGeometry,
+        island: CGRect,
+        islandRadius: CGFloat,
+        glow: GlowGeometry,
+        outwardOnly: Bool,
+        appearance: GlowAppearance,
+        pattern: GlowPattern = GlowPattern(),
+        drawsGlow: Bool = true
+    ) -> PreparedImages {
+        Self.render(capturePreparation(geometry: geometry, island: island, islandRadius: islandRadius,
+            glow: glow, outwardOnly: outwardOnly, appearance: appearance, pattern: pattern, drawsGlow: drawsGlow))
+    }
+
+    func capturePreparation(
+        geometry: NotchGeometry, island: CGRect, islandRadius: CGFloat, glow: GlowGeometry,
+        outwardOnly: Bool, appearance: GlowAppearance, pattern: GlowPattern = GlowPattern(), drawsGlow: Bool = true
+    ) -> PreparationInputs {
+        let local = Self.canonicalIslandFrame(island, panel: Self.panelFrame(for: geometry), edge: geometry.edge)
+        let scale = geometry.backingScale
+        let softKey = SoftKey(glow: glow, islandSize: local.size, islandRadius: islandRadius,
+                              outwardOnly: outwardOnly, stops: appearance.stops, scale: scale)
+        let shadowKey = ShadowKey(size: local.size, radius: islandRadius, scale: scale)
+        let visible = !appearance.hidden
+        let rendererKey: GlowFrameRenderer.Key?
+        if visible && drawsGlow && (pattern.usesGrid || pattern.effect != .breathe) {
+            rendererKey = .init(glow: glow, islandRadius: islandRadius, stops: appearance.stops,
+                scale: scale, pattern: pattern, colorSpace: panel.screen?.colorSpace?.cgColorSpace,
+                islandSize: pattern.usesGrid ? .zero : local.size, outwardOnly: pattern.usesGrid ? true : outwardOnly)
+        } else {
+            rendererKey = nil
+        }
+        let motion = Self.playsMotion(pattern: pattern, appearance: appearance,
+                                      reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        return PreparationInputs(softKey: softKey, shadowKey: shadowKey,
+            rendersSoft: visible && drawsGlow && !pattern.usesGrid, rendersShadow: visible,
+            rendererKey: rendererKey, glyphs: rendererKey.flatMap(GlowFrameRenderer.glyphs),
+            rendersResting: pattern.usesGrid && !motion)
+    }
+
+    /// Only immutable Core Graphics/Core Text values reach this function; no window or AppKit queries occur here.
+    nonisolated static func render(_ inputs: PreparationInputs) -> PreparedImages {
+        let key = inputs.softKey, shadowKey = inputs.shadowKey
+        let soft = inputs.rendersSoft
+            ? GlowRenderer.render(glow: key.glow, islandSize: key.islandSize, islandRadius: key.islandRadius,
+                                  outwardOnly: key.outwardOnly, stops: key.stops, scale: key.scale)
+            : nil
+        let shadow = inputs.rendersShadow
+            ? GlowRenderer.renderShadow(width: shadowKey.size.width, height: shadowKey.size.height,
+                                        cornerRadius: shadowKey.radius, scale: shadowKey.scale)
+            : nil
+        let renderer = Task.isCancelled ? nil : inputs.rendererKey.map { GlowFrameRenderer($0, glyphs: inputs.glyphs) }
+        let resting = inputs.rendersResting
+            ? renderer?.render(time: 0, blend: 0, breathSeconds: 0, breathAmplitude: 0) : nil
+        return PreparedImages(softKey: key, soft: soft, shadowKey: shadowKey, shadow: shadow,
+                              renderer: renderer, resting: resting)
+    }
+
+    /// A clock or data refresh can change panel inputs without changing any of the installed materials.
+    /// Reuse the controller's existing keys so those refreshes neither draw again nor briefly hide the glow.
+    func installedPreparation(matching inputs: PreparationInputs) -> PreparedImages? {
+        guard !inputs.rendersSoft || softKey == inputs.softKey,
+              !inputs.rendersShadow || shadowKey == inputs.shadowKey,
+              inputs.rendererKey == nil || frameRenderer?.key == inputs.rendererKey,
+              !inputs.rendersResting || restingKey == inputs.rendererKey else { return nil }
+        return PreparedImages(softKey: inputs.softKey, soft: nil, shadowKey: inputs.shadowKey, shadow: nil,
+                              renderer: inputs.rendererKey == nil ? nil : frameRenderer, resting: nil)
     }
 
     /// - island: the island's current frame in screen coordinates.
@@ -141,12 +276,15 @@ final class GlowWindowController {
         /// A logo queue's glow is a backdrop behind its marks, never a rim: once the panel has grown there
         /// is no backdrop left to draw, so the field stops rather than following the new shape around. The
         /// panel keeps its shadow, which lives here too.
-        drawsGlow: Bool = true
+        drawsGlow: Bool = true,
+        prepared: PreparedImages? = nil,
+        materialsPending: Bool = false
     ) {
         let frame = Self.panelFrame(for: geometry)
         if panel.frame != frame { panel.setFrame(frame, display: false) }
         // The host has not been resized to the new panel frame yet; the fade is measured against it directly.
-        updateEdgeFade(column: backdrop, margin: Self.logoEdgeMargin(for: geometry), panel: frame)
+        updateEdgeFade(column: backdrop, margin: Self.logoEdgeMargin(for: geometry), panel: frame, edge: geometry.edge)
+        orientCanvas(in: frame, edge: geometry.edge)
         glowLayer.contentsScale = geometry.backingScale
         shadowLayer.contentsScale = geometry.backingScale
 
@@ -159,8 +297,15 @@ final class GlowWindowController {
         }
         if !panel.isVisible { panel.orderFrontRegardless() }
 
-        // Island rect in the host's (bottom-left origin) coordinates.
-        let local = CGRect(x: island.minX - frame.minX, y: island.minY - frame.minY, width: island.width, height: island.height)
+        // Opening and collapse commit their window geometry immediately; the worker supplies correctly shaped materials.
+        // A previous surface's contour must not be stretched over a different panel while that result is pending.
+        glowLayer.isHidden = materialsPending
+        shadowLayer.isHidden = materialsPending
+        alertLayer.isHidden = materialsPending
+        if materialsPending { return }
+
+        // Bitmaps and shader geometry retain their top-edge convention, including on a vertical dock.
+        let local = Self.canonicalIslandFrame(island, panel: frame, edge: geometry.edge)
         let glowTop = local.maxY - glow.topOffset
         let glowRect = CGRect(x: local.minX - glow.sideInset, y: glowTop - glow.height, width: glow.width, height: glow.height)
 
@@ -169,12 +314,12 @@ final class GlowWindowController {
                                           reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
             if pattern.usesGrid {
                 updateGridImage(glow: glow, islandRadius: islandRadius, stops: appearance.stops, scale: geometry.backingScale,
-                                pattern: pattern, appearance: appearance, motion: motion)
+                                pattern: pattern, appearance: appearance, motion: motion, prepared: prepared)
             } else {
                 restingKey = nil
-                updateSoftImage(glow: glow, islandSize: island.size, islandRadius: islandRadius, outwardOnly: outwardOnly,
+                updateSoftImage(glow: glow, islandSize: local.size, islandRadius: islandRadius, outwardOnly: outwardOnly,
                                 stops: appearance.stops, scale: geometry.backingScale, pattern: pattern, appearance: appearance,
-                                motion: motion)
+                                motion: motion, prepared: prepared)
             }
         } else {
             animator.stop()
@@ -182,7 +327,7 @@ final class GlowWindowController {
             restingKey = nil
             glowLayer.contents = nil
         }
-        updateShadowImage(island: local, radius: islandRadius, scale: geometry.backingScale)
+        updateShadowImage(island: local, radius: islandRadius, scale: geometry.backingScale, prepared: prepared)
 
         CATransaction.begin()
         if animated {
@@ -205,7 +350,7 @@ final class GlowWindowController {
             alertLayer.opacity = 0
             return
         }
-        applyAlert(alert, vendors: quotaVendors, glow: glow, islandSize: island.size, radius: islandRadius,
+        applyAlert(alert, vendors: quotaVendors, glow: glow, islandSize: local.size, radius: islandRadius,
                    outwardOnly: outwardOnly, scale: geometry.backingScale, pattern: pattern)
     }
 
@@ -281,10 +426,18 @@ final class GlowWindowController {
         alertLayer.add(pulse, forKey: "quota-event")
     }
 
+    private func renderer(for key: GlowFrameRenderer.Key, prepared: PreparedImages?) -> GlowFrameRenderer {
+        if let frameRenderer, frameRenderer.key == key { return frameRenderer }
+        let renderer = prepared?.renderer.flatMap { $0.key == key ? $0 : nil } ?? GlowFrameRenderer(key)
+        frameRenderer = renderer
+        return renderer
+    }
+
     private func updateGridImage(glow: GlowGeometry, islandRadius: CGFloat, stops: [GradientStop], scale: CGFloat,
-                                 pattern: GlowPattern, appearance: GlowAppearance, motion: Bool) {
-        let renderer = frames.renderer(for: .init(glow: glow, islandRadius: islandRadius, stops: stops, scale: scale, pattern: pattern,
-                                                  colorSpace: panel.screen?.colorSpace?.cgColorSpace))
+                                 pattern: GlowPattern, appearance: GlowAppearance, motion: Bool, prepared: PreparedImages?) {
+        let renderer = renderer(for: .init(glow: glow, islandRadius: islandRadius, stops: stops, scale: scale, pattern: pattern,
+                                           colorSpace: panel.screen?.colorSpace?.cgColorSpace), prepared: prepared)
+        let resting = prepared?.renderer?.key == renderer.key ? prepared?.resting : nil
         softKey = nil
         glowPadding = 0
         CATransaction.begin()
@@ -298,22 +451,24 @@ final class GlowWindowController {
             animator.play(renderer, breathSeconds: appearance.breathSeconds, breathAmplitude: Self.breathDepth(appearance))
         } else if animator.isRunning && !appearance.hidden {
             // The last agent went idle: ease back into the resting frame.
-            animator.settle(renderer) { [weak self] in self?.showResting(renderer) }
+            animator.settle(renderer) { [weak self] in self?.showResting(renderer, image: resting) }
         } else {
             animator.stop()
-            showResting(renderer)
+            showResting(renderer, image: resting)
         }
     }
 
     /// The soft glow keeps its nine-slice bitmap. Effects other than breathing swap in frames of the same size and
     /// layout, and hand the resting bitmap back when they stop.
     private func updateSoftImage(glow: GlowGeometry, islandSize: CGSize, islandRadius: CGFloat, outwardOnly: Bool, stops: [GradientStop],
-                                 scale: CGFloat, pattern: GlowPattern, appearance: GlowAppearance, motion: Bool) {
-        updateGlowImage(glow: glow, islandSize: islandSize, islandRadius: islandRadius, outwardOnly: outwardOnly, stops: stops, scale: scale)
+                                 scale: CGFloat, pattern: GlowPattern, appearance: GlowAppearance, motion: Bool,
+                                 prepared: PreparedImages?) {
+        updateGlowImage(glow: glow, islandSize: islandSize, islandRadius: islandRadius, outwardOnly: outwardOnly,
+                        stops: stops, scale: scale, prepared: prepared)
         guard pattern.effect != .breathe else { return stopSoftMotion() }
-        let renderer = frames.renderer(for: .init(glow: glow, islandRadius: islandRadius, stops: stops, scale: scale, pattern: pattern,
-                                                  colorSpace: panel.screen?.colorSpace?.cgColorSpace,
-                                                  islandSize: islandSize, outwardOnly: outwardOnly))
+        let renderer = renderer(for: .init(glow: glow, islandRadius: islandRadius, stops: stops, scale: scale, pattern: pattern,
+                                           colorSpace: panel.screen?.colorSpace?.cgColorSpace,
+                                           islandSize: islandSize, outwardOnly: outwardOnly), prepared: prepared)
         if motion {
             animator.play(renderer, breathSeconds: appearance.breathSeconds, breathAmplitude: Self.breathDepth(appearance))
         } else if animator.isRunning && !appearance.hidden {
@@ -343,9 +498,9 @@ final class GlowWindowController {
         CATransaction.commit()
     }
 
-    private func showResting(_ renderer: GlowFrameRenderer) {
+    private func showResting(_ renderer: GlowFrameRenderer, image: GlowImage? = nil) {
         guard restingKey != renderer.key,
-              let rendered = renderer.render(time: 0, blend: 0, breathSeconds: 0, breathAmplitude: 0) else { return }
+              let rendered = image ?? renderer.render(time: 0, blend: 0, breathSeconds: 0, breathAmplitude: 0) else { return }
         restingKey = renderer.key
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -354,10 +509,10 @@ final class GlowWindowController {
     }
 
     private func updateGlowImage(glow: GlowGeometry, islandSize: CGSize, islandRadius: CGFloat, outwardOnly: Bool,
-                                 stops: [GradientStop], scale: CGFloat) {
+                                 stops: [GradientStop], scale: CGFloat, prepared: PreparedImages?) {
         let key = SoftKey(glow: glow, islandSize: islandSize, islandRadius: islandRadius, outwardOnly: outwardOnly, stops: stops, scale: scale)
         guard key != softKey else { return }
-        guard let rendered = GlowRenderer.render(
+        guard let rendered = (prepared?.softKey == key ? prepared?.soft : nil) ?? GlowRenderer.render(
             glow: glow, islandSize: islandSize, islandRadius: islandRadius, outwardOnly: outwardOnly, stops: stops, scale: scale
         ) else { return }
         softKey = key
@@ -372,10 +527,11 @@ final class GlowWindowController {
         CATransaction.commit()
     }
 
-    private func updateShadowImage(island: CGRect, radius: CGFloat, scale: CGFloat) {
+    private func updateShadowImage(island: CGRect, radius: CGFloat, scale: CGFloat, prepared: PreparedImages?) {
         let key = ShadowKey(size: island.size, radius: radius, scale: scale)
         guard key != shadowKey else { return }
-        guard let rendered = GlowRenderer.renderShadow(width: island.width, height: island.height, cornerRadius: radius, scale: scale) else { return }
+        guard let rendered = (prepared?.shadowKey == key ? prepared?.shadow : nil)
+            ?? GlowRenderer.renderShadow(width: island.width, height: island.height, cornerRadius: radius, scale: scale) else { return }
         shadowKey = key
         shadowPadding = rendered.padding
         CATransaction.begin()

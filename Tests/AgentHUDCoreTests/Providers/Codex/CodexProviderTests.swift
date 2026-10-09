@@ -104,19 +104,153 @@ final class CodexProviderTests: XCTestCase {
                        "the collector's path reaches the index even before its own watcher reports the append")
     }
 
+    func testOnlyDesktopRolloutsNavigateToTheirThreadAfterTheCacheReopens() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = Date(timeIntervalSince1970: 1_789_000_000)
+        let origins = [("desktop", "vscode", "Codex Desktop"), ("cli", "cli", "Codex Desktop"),
+                       ("exec", "exec", "Codex Desktop"), ("ide", "vscode", "codex_vscode"),
+                       ("unknown", "other", "new-client")]
+        for (id, source, origin) in origins {
+            let rows = [line(type: "session_meta", payload: ["id": id, "cwd": "/same-project", "source": source, "originator": origin], at: now.ISO8601Format()),
+                        line(payload: ["type": "task_started", "turn_id": "turn"], at: now.ISO8601Format()),
+                        line(payload: ["type": "task_complete", "turn_id": "turn"], at: now.addingTimeInterval(1).ISO8601Format())]
+            try Data((rows.joined(separator: "\n") + "\n").utf8).write(to: directory.appendingPathComponent("rollout-\(id).jsonl"))
+        }
+        let database = directory.appendingPathComponent("ledger.sqlite")
+        let initial = CodexTranscriptStore(roots: [directory], ledger: try UsageLedger(url: database))
+        let indexed = await initial.index(since: .distantPast)
+        XCTAssertEqual(indexed.sessions.first(where: { $0.transcript.id == "desktop" })?.transcript.navigationTarget, .codexThread(id: "desktop"))
+        let reopened = CodexTranscriptStore(roots: [directory], ledger: try UsageLedger(url: database))
+        let provider = CodexUsageProvider(readLimits: { throw UsageProviderError("signed out") }, transcripts: reopened,
+            history: QuotaHistoryStore(), clock: { now.addingTimeInterval(2) })
+        let report = try await provider.fetchUsage(agents: [], historyHours: 168)
+        XCTAssertEqual(report.sessions.count, origins.count)
+        XCTAssertEqual(report.completions.count, origins.count)
+        for session in report.sessions {
+            let expected: SessionNavigationTarget? = session.id == "desktop" ? .codexThread(id: session.id) : nil
+            XCTAssertEqual(session.navigationTarget, expected)
+            XCTAssertEqual(report.completions.first(where: { $0.sessionID == session.id })?.navigationTarget, expected)
+        }
+    }
+
+    func testCurrentCodexOriginRoutesSameDirectorySessionsAndAllCachedCompletions() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = Date(timeIntervalSince1970: 1_789_000_000)
+        let origins = directory.appendingPathComponent("origins")
+        try CodexSessionOrigins.prepare(directory: origins)
+        for (id, source, origin) in [("a", "vscode", "Codex Desktop"), ("b", "cli", "codex_cli_rs")] {
+            var rows = [line(type: "session_meta", payload: ["id": id, "cwd": "/same-project", "source": source, "originator": origin], at: now.ISO8601Format())]
+            for turn in ["first", "second"] {
+                rows.append(line(payload: ["type": "task_started", "turn_id": turn], at: now.ISO8601Format()))
+                rows.append(line(payload: ["type": "task_complete", "turn_id": turn], at: now.addingTimeInterval(1).ISO8601Format()))
+            }
+            try Data((rows.joined(separator: "\n") + "\n").utf8).write(to: directory.appendingPathComponent("rollout-\(id).jsonl"))
+        }
+        let ledger = directory.appendingPathComponent("ledger.sqlite")
+        _ = await CodexTranscriptStore(roots: [directory], ledger: try UsageLedger(url: ledger)).index(since: .distantPast)
+        let store = CodexTranscriptStore(roots: [directory], ledger: try UsageLedger(url: ledger))
+        let liveTargets: [String: SessionNavigationTarget] = ["a": .iTermSession(id: "daemon-pane-a"), "b": .iTermSession(id: "daemon-pane-b")]
+        let provider = CodexUsageProvider(readLimits: { throw UsageProviderError("signed out") }, transcripts: store,
+            history: QuotaHistoryStore(), clock: { now.addingTimeInterval(10) }, sessionOriginsDirectory: origins,
+            readTerminalOrigins: { _ in liveTargets })
+        XCTAssertTrue(provider.watchedDirectories?.contains(origins) == true)
+
+        func assertTargets(_ report: UsageReport, a: SessionNavigationTarget?, b: SessionNavigationTarget?,
+                           file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertEqual(report.sessions.count, 2, file: file, line: line)
+            XCTAssertEqual(report.completions.count, 4, file: file, line: line)
+            for (id, expected) in [("a", a), ("b", b)] {
+                XCTAssertEqual(report.sessions.first(where: { $0.id == id })?.navigationTarget, expected, file: file, line: line)
+                XCTAssertTrue(report.completions.filter { $0.sessionID == id }.allSatisfy { $0.navigationTarget == expected }, file: file, line: line)
+            }
+        }
+        func record(_ id: String, host: CodexSessionOrigins.Host, target: String?, at: Date) throws {
+            let payload = try JSONSerialization.data(withJSONObject: ["session_id": id, "hook_event_name": "UserPromptSubmit"])
+            let environment = target.map { ["TERM_PROGRAM": "iTerm.app", "ITERM_SESSION_ID": $0] } ?? [:]
+            try CodexSessionOrigins.record(data: payload, host: host, environment: environment, now: at, directory: origins)
+        }
+
+        // A current daemon CLI overrides the rollout's original Desktop identity; cwd never binds two sessions.
+        assertTargets(try await provider.fetchUsage(agents: [], historyHours: 168), a: liveTargets["a"], b: liveTargets["b"])
+        try record("a", host: .cli, target: "embedded-pane-a", at: now)
+        try record("b", host: .cli, target: "embedded-pane-b", at: now)
+        assertTargets(try await provider.fetchUsage(agents: [], historyHours: 168),
+                      a: .iTermSession(id: "embedded-pane-a"), b: .iTermSession(id: "embedded-pane-b"))
+        try record("a", host: .daemon, target: "inherited-wrong-pane", at: now.addingTimeInterval(1))
+        assertTargets(try await provider.fetchUsage(agents: [], historyHours: 168), a: liveTargets["a"], b: .iTermSession(id: "embedded-pane-b"))
+        try record("a", host: .cli, target: nil, at: now.addingTimeInterval(2))
+        assertTargets(try await provider.fetchUsage(agents: [], historyHours: 168), a: nil, b: .iTermSession(id: "embedded-pane-b"))
+        try record("a", host: .desktop, target: "inherited-wrong-pane", at: now.addingTimeInterval(3))
+        assertTargets(try await provider.fetchUsage(agents: [], historyHours: 168), a: .codexThread(id: "a"), b: .iTermSession(id: "embedded-pane-b"))
+        try record("a", host: .daemon, target: nil, at: now.addingTimeInterval(4))
+        let moving = CodexUsageProvider(readLimits: { throw UsageProviderError("signed out") }, transcripts: store,
+            history: QuotaHistoryStore(), clock: { now.addingTimeInterval(10) }, sessionOriginsDirectory: origins,
+            readTerminalOrigins: { _ in
+                let payload = try! JSONSerialization.data(withJSONObject: ["session_id": "a", "hook_event_name": "UserPromptSubmit"])
+                try? CodexSessionOrigins.record(data: payload, host: .cli, environment: [:],
+                    now: now.addingTimeInterval(5), directory: origins)
+                return liveTargets
+            })
+        assertTargets(try await moving.fetchUsage(agents: [], historyHours: 168), a: nil, b: .iTermSession(id: "embedded-pane-b"))
+        XCTAssertEqual(CodexSessionOrigins.read(directory: origins)["a"]?.at, now.addingTimeInterval(5),
+                       "a host change during the async daemon lookup is applied to this report")
+    }
+
     func testForkHistoryIsDeduplicatedButInternalModelUsageIsIncluded() {
         var t = CodexTranscript()
         ingest(&t, type: "session_meta", payload: ["id":"child", "timestamp":"2026-09-07T09:00:00Z", "source":["subagent":["thread_spawn":["parent_thread_id":"parent"]]]])
+        ingest(&t, type: "session_meta", payload: ["id":"parent", "timestamp":"2026-09-07T07:00:00Z", "source":"cli"])
         token(&t, input: 1000, cached: 800, output: 100, at: "2026-09-07T08:00:00Z")
         token(&t, input: 1400, cached: 1000, output: 150)
         XCTAssertEqual(t.usage.count, 1)
         XCTAssertEqual(t.usage.first?.input, 200)
         XCTAssertEqual(t.usage.first?.output, 50)
+        XCTAssertEqual(t.id, "child")
+        XCTAssertTrue(t.isSubagent)
         var guardian = CodexTranscript()
         ingest(&guardian, type: "session_meta", payload: ["id":"review", "source":["subagent":["other":"guardian"]]])
         token(&guardian, input: 10000, cached: 0, output: 1000)
         XCTAssertEqual(guardian.usage.first?.input, 10000)
         XCTAssertEqual(guardian.usage.first?.output, 1000)
+    }
+
+    func testFirstValidMetadataAndOrdinalBoundaryKeepRestampedParentHistoryInherited() throws {
+        var t = CodexTranscript()
+        ingest(&t, type: "session_meta", payload: ["cwd": "/invalid"])
+        ingest(&t, type: "session_meta", payload: [
+            "id": "child", "cwd": "/child", "originator": "Codex Desktop", "subagent_history_start_ordinal": 5,
+            "source": ["subagent": ["thread_spawn": ["parent_thread_id": "parent", "agent_path": "/root/audit", "agent_nickname": "Ampere"]]],
+        ], ordinal: 0)
+        ingest(&t, type: "session_meta", payload: ["id": "parent", "cwd": "/parent", "source": "cli", "timestamp": "2026-09-07T07:00:00Z"], ordinal: 1)
+        token(&t, input: 1000, cached: 800, output: 100, ordinal: 2)
+        ingest(&t, payload: ["type": "task_started", "turn_id": "parent-turn"], ordinal: 3)
+        ingest(&t, type: "compacted", payload: [:], ordinal: 4)
+        ingest(&t, payload: ["type": "user_message", "message": "Parent task"], ordinal: 5)
+        XCTAssertTrue(t.sessionTurns.isEmpty, "copied events have a new timestamp, so their ordinal defines inheritance")
+        XCTAssertTrue(t.usage.isEmpty)
+        XCTAssertNil(t.task)
+        XCTAssertNil(t.lastActivityAt)
+        var reopened = try JSONDecoder().decode(CodexTranscript.self, from: JSONEncoder().encode(t))
+        ingest(&reopened, payload: ["type": "task_started", "turn_id": "own-turn"], at: "2026-09-07T09:00:01Z", ordinal: 6)
+        token(&reopened, input: 1400, cached: 1000, output: 150, at: "2026-09-07T09:00:02Z", ordinal: 7)
+        ingest(&reopened, payload: ["type": "user_message", "message": "Child task"], at: "2026-09-07T09:00:03Z", ordinal: 8)
+        XCTAssertEqual(reopened.id, "child")
+        XCTAssertEqual(reopened.cwd, "/child")
+        XCTAssertEqual(reopened.client, "Desktop")
+        XCTAssertEqual(reopened.parentThreadID, "parent")
+        XCTAssertEqual(reopened.agentName, "Ampere")
+        XCTAssertEqual(reopened.startedAt, ISO8601Fast.parse("2026-09-07T09:00:00Z"))
+        XCTAssertTrue(reopened.isSubagent)
+        XCTAssertFalse(reopened.isInternal)
+        XCTAssertEqual(reopened.task, "Child task")
+        XCTAssertEqual(reopened.sessionTurns.map(\.turnID), ["own-turn"])
+        XCTAssertEqual(reopened.drainMarks().map(\.kind), [.prompt])
+        XCTAssertEqual(reopened.usage.first?.input, 200, "inherited totals still establish the cumulative baseline")
+        XCTAssertEqual(reopened.usage.first?.cachedInput, 200)
+        XCTAssertEqual(reopened.usage.first?.output, 50)
+        XCTAssertNil(reopened.completions)
     }
 
     func testCodexRetainsEachSuccessfulTurnAndIgnoresCancellationTimeoutAndInheritedHistory() throws {
@@ -174,6 +308,56 @@ final class CodexProviderTests: XCTestCase {
         XCTAssertNil(t.completions)
     }
 
+    func testCompletionUsesTheFinalAnswerAndKeepsItOutOfTheLedger() throws {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var value = CodexTranscript()
+        ingest(&value, type: "session_meta", payload: ["id": "session", "source": "cli"], at: start)
+        ingest(&value, payload: ["type": "task_started", "turn_id": "first"], at: start.addingTimeInterval(1))
+        ingest(&value, payload: ["type": "agent_message", "message": "Checking the files", "channel": "commentary"], at: start.addingTimeInterval(2))
+        let final = String(repeating: "First paragraph. ", count: 300) + "\n\nThe final paragraph of this answer."
+        ingest(&value, payload: ["type": "task_complete", "turn_id": "first", "last_agent_message": final], at: start.addingTimeInterval(3))
+        let completion = try XCTUnwrap(value.completions?.first)
+        XCTAssertEqual(completion.message, "The final paragraph of this answer.", "the final paragraph is selected before truncating a long answer")
+
+        ingest(&value, payload: ["type": "task_started", "turn_id": "second"], at: start.addingTimeInterval(4))
+        ingest(&value, payload: ["type": "agent_message", "message": "Still checking", "channel": "commentary"], at: start.addingTimeInterval(5))
+        ingest(&value, payload: ["type": "task_complete", "turn_id": "second"], at: start.addingTimeInterval(6))
+        XCTAssertNil(value.completions?.last?.message, "a completion never substitutes commentary or an earlier answer")
+
+        let encoded = try JSONEncoder().encode(value)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("The final paragraph"))
+        let restored = try JSONDecoder().decode(CodexTranscript.self, from: encoded)
+        XCTAssertEqual(restored.completions?.map(\.id), value.completions?.map(\.id))
+        XCTAssertTrue(restored.completions?.allSatisfy { $0.message == nil } == true)
+    }
+
+    func testCompletionFallbackRequiresAnExplicitFinalMessageFromItsOwnTurn() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var value = CodexTranscript()
+        ingest(&value, type: "session_meta", payload: ["id": "session", "source": "cli"], at: start)
+        ingest(&value, payload: ["type": "task_started", "turn_id": "first"], at: start.addingTimeInterval(1))
+        ingest(&value, payload: ["type": "agent_message", "turn_id": "first", "message": "First answer", "channel": "final"], at: start.addingTimeInterval(2))
+        ingest(&value, payload: ["type": "task_started", "turn_id": "second"], at: start.addingTimeInterval(4))
+        ingest(&value, payload: ["type": "agent_message", "turn_id": "missing", "message": "Unrelated answer", "channel": "final"], at: start.addingTimeInterval(5))
+        ingest(&value, payload: ["type": "agent_message", "message": "Late earlier answer", "channel": "final"], at: start.addingTimeInterval(3))
+        ingest(&value, payload: ["type": "task_complete", "turn_id": "first"], at: start.addingTimeInterval(3))
+        ingest(&value, payload: ["type": "task_complete", "turn_id": "second"], at: start.addingTimeInterval(6))
+        XCTAssertEqual(value.completions?.map(\.message), ["First answer", nil])
+
+        ingest(&value, payload: ["type": "task_started", "turn_id": "current"], at: start.addingTimeInterval(7))
+        let item: [String: Any] = ["type": "AgentMessage", "phase": "final_answer", "content": [["type": "Text", "text": "Current answer\n\nFinal summary"]]]
+        ingest(&value, payload: ["type": "item_completed", "turn_id": "current", "item": item], at: start.addingTimeInterval(8))
+        ingest(&value, payload: ["type": "task_complete", "turn_id": "current", "last_agent_message": ""], at: start.addingTimeInterval(9))
+        XCTAssertEqual(value.completions?.last?.message, "Final summary")
+
+        ingest(&value, payload: ["type": "task_started", "turn_id": "long"], at: start.addingTimeInterval(10))
+        let paragraph = "Beginning of the final paragraph. " + String(repeating: "detail ", count: 400)
+        ingest(&value, payload: ["type": "agent_message", "turn_id": "long", "message": "Earlier paragraph\n\n" + paragraph, "channel": "final"],
+               at: start.addingTimeInterval(11))
+        ingest(&value, payload: ["type": "task_complete", "turn_id": "long"], at: start.addingTimeInterval(12))
+        XCTAssertEqual(value.completions?.last?.message, String(paragraph.prefix(599)) + "…", "a long final paragraph retains its beginning before clipping")
+    }
+
     func testLateCompletionDoesNotEndTheNextTurn() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         var value = CodexTranscript()
@@ -216,7 +400,7 @@ final class CodexProviderTests: XCTestCase {
         XCTAssertEqual(value.sessionTurns.last, ended)
     }
 
-    func testInheritedAndSubagentTurnsAreNotReported() {
+    func testInheritedTurnsAreSuppressedAndChildTurnsRemainAvailableToTheirDetail() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         var value = CodexTranscript()
         ingest(&value, type: "session_meta", payload: ["id": "session", "source": "cli"], at: start.addingTimeInterval(10))
@@ -225,7 +409,7 @@ final class CodexProviderTests: XCTestCase {
         var child = CodexTranscript()
         ingest(&child, type: "session_meta", payload: ["id": "child", "source": ["subagent": ["thread_spawn": [:]]]], at: start)
         ingest(&child, payload: ["type": "task_started", "turn_id": "child-turn"], at: start.addingTimeInterval(1))
-        XCTAssertTrue(child.sessionTurns.isEmpty)
+        XCTAssertEqual(child.sessionTurns.map(\.turnID), ["child-turn"])
     }
 
     func testTitleIsTheFirstOwnPromptInCurrentAndLegacyRollouts() {
@@ -331,7 +515,7 @@ final class CodexProviderTests: XCTestCase {
     }
 
     func testClientsTheCatalogDoesNotNameAreShownAsWritten() {
-        for (origin, source, expected) in [("codex_work_desktop", "vscode", "codex_work_desktop"), ("vibearound", "vscode", "vibearound"),
+        for (origin, source, expected) in [("codex_mcp_server", "mcp", "codex_mcp_server"), ("vibearound", "vscode", "vibearound"),
                                            ("codex_vscode", "vscode", "IDE"), ("Codex Desktop", "vscode", "Desktop")] {
             var t = CodexTranscript()
             ingest(&t, type: "session_meta", payload: ["id":"session", "cwd":"/project", "source":source, "originator":origin])
@@ -340,15 +524,47 @@ final class CodexProviderTests: XCTestCase {
         var legacy = CodexTranscript()
         ingest(&legacy, type: "session_meta", payload: ["id":"session", "cwd":"/project", "source":"vscode"])
         XCTAssertEqual(legacy.client, "IDE", "rollouts without an originator keep the extension's name")
-        XCTAssertTrue(VendorCatalog.unnamed["Codex client"]?.contains("codex_work_desktop") == true)
+        XCTAssertTrue(VendorCatalog.unnamed["Codex client"]?.contains("codex_mcp_server") == true)
+    }
+
+    /// Every name Codex gives one of its clients files the session under that client: the desktop app signed in to a work
+    /// workspace writes codex_work_desktop, and Codex's own code knows the desktop app as codex_desktop and its CLI as
+    /// codex_cli_rs and codex-cli.
+    func testEachOriginatorOfOneClientFilesItsSessionsUnderThatClient() {
+        let cases: [(origin: String, client: String, name: String)] = [
+            ("Codex Desktop", "Desktop", "Codex Desktop"), ("codex_work_desktop", "Desktop", "Codex Desktop"),
+            ("codex_desktop", "Desktop", "Codex Desktop"), ("codex_vscode", "IDE", "Codex IDE extension"), ("codex-tui", "CLI", "Codex CLI"),
+            ("codex_cli_rs", "CLI", "Codex CLI"), ("codex-cli", "CLI", "Codex CLI"), ("codex_exec", "CLI · exec", "Codex CLI"),
+        ]
+        for (origin, client, name) in cases {
+            var t = CodexTranscript()
+            ingest(&t, type: "session_meta", payload: ["id":"session", "cwd":"/project", "source":"vscode", "originator":origin])
+            XCTAssertEqual(t.client, client, origin)
+            let source = SessionSource(vendor: "Codex", client: t.client)
+            XCTAssertEqual(source.name, name, origin)
+        }
+        XCTAssertEqual(SessionSource(vendor: "Codex", client: "Desktop"), SessionSource(vendor: "Codex", client: VendorCatalog.client("codex_work_desktop", vendor: "Codex")),
+                       "one entry in the sessions filter")
     }
 
     func testWindowNamesComeFromTheCatalogOrTheService() throws {
+        L10n.setLanguage(.en)
+        defer { L10n.setLanguage(.system) }
         let limits = try decode(#"{"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":3,"windowDurationMins":300}},"base_model_inference":{"limitName":"gpt-reserve","primary":{"usedPercent":0,"windowDurationMins":10080}},"codex_next":{"limitName":"Next Model","primary":{"usedPercent":5,"windowDurationMins":10080}}}}"#)
         let labels = Dictionary(uniqueKeysWithValues: limits.rows.map { ($0.id, $0.label) })
-        XCTAssertEqual(labels["codex"], "5h")
-        XCTAssertEqual(labels["codex:base_model_inference:primary"], "Luna Reserve · Weekly", "the name OpenAI's own client shows")
-        XCTAssertEqual(labels["codex:codex_next:primary"], "Next Model · Weekly", "a window the catalog does not name keeps the service's name")
+        XCTAssertEqual(labels["codex"], "5h limit")
+        XCTAssertEqual(labels["codex:base_model_inference:primary"], "Luna Reserve · Weekly limit", "the name OpenAI's own client shows")
+        XCTAssertEqual(labels["codex:codex_next:primary"], "Next Model · Weekly limit", "a window the catalog does not name keeps the service's name")
+        let short = Dictionary(uniqueKeysWithValues: limits.rows.map { ($0.id, $0.descriptor.shortName) })
+        XCTAssertEqual(short["codex:base_model_inference:primary"], "Reserve", "the catalog's word")
+        XCTAssertEqual(short["codex:codex_next:primary"], "Model", "the last word of a name the catalog does not know")
+    }
+
+    func testOnlyTheCodexBucketCoversEveryModel() throws {
+        let limits = try decode(#"{"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":3,"windowDurationMins":300},"secondary":{"usedPercent":9,"windowDurationMins":10080}},"base_model_inference":{"limitName":"gpt-reserve","primary":{"usedPercent":0,"windowDurationMins":10080}}}}"#)
+        XCTAssertEqual(limits.rows.map(\.id), ["codex", "codex:codex:secondary", "codex:base_model_inference:primary"])
+        XCTAssertEqual(limits.rows.map(\.descriptor.allModels), [true, true, false])
+        XCTAssertEqual(limits.rows(home: "").map(\.descriptor.allModels), [true, true, false], "an account's rows keep the flag")
     }
 
     func testLocatorWorksWithoutDesktopOrWithoutCLI() throws {
@@ -405,20 +621,46 @@ final class CodexProviderTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let rollouts: [String: [String: Any]] = [
             "rollout-parent.jsonl": ["id": "parent", "source": "cli"],
-            "rollout-child.jsonl": ["id": "child", "source": ["subagent": ["thread_spawn": ["parent_thread_id": "parent"]]]],
+            "rollout-child.jsonl": ["id": "child", "cwd": "/child", "source": ["subagent": ["thread_spawn": ["parent_thread_id": "parent", "agent_path": "/root/child"]]]],
+            "rollout-grandchild.jsonl": ["id": "grandchild", "source": ["subagent": ["thread_spawn": ["parent_thread_id": "child", "agent_nickname": "Curie"]]]],
             "rollout-guardian.jsonl": ["id": "guardian", "parent_thread_id": "child", "source": ["subagent": ["other": "guardian"]]],
             "rollout-other.jsonl": ["id": "other", "source": "cli"],
         ]
         for (name, meta) in rollouts {
-            try (line(type: "session_meta", payload: meta) + "\n").write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+            var rows = [line(type: "session_meta", payload: meta)]
+            if meta["id"] as? String == "child" {
+                rows += [line(type: "session_meta", payload: ["id": "parent", "source": "cli", "cwd": "/parent"]),
+                         line(type: "turn_context", payload: ["model": "gpt-6-astra"]),
+                         line(payload: ["type": "user_message", "message": "Review the parser"]),
+                         line(payload: ["type": "task_started", "turn_id": "child-turn"]),
+                         line(payload: ["type": "token_count", "info": ["total_token_usage": ["input_tokens": 100, "cached_input_tokens": 20, "output_tokens": 10]]])]
+            }
+            try (rows.joined(separator: "\n") + "\n").write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
         }
-        let provider = CodexUsageProvider(readLimits: { throw UsageProviderError("signed out") }, transcripts: CodexTranscriptStore(roots: [dir]), history: QuotaHistoryStore())
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(1)], ofItemAtPath: dir.appendingPathComponent("rollout-child.jsonl").path)
+        let now = self.now
+        let provider = CodexUsageProvider(readLimits: { throw UsageProviderError("signed out") }, transcripts: CodexTranscriptStore(roots: [dir]), history: QuotaHistoryStore(), clock: { now })
         let report = try await provider.fetchAccountAndLocalUsage(agents: [], historyHours: 48)
         let sessions = Dictionary(uniqueKeysWithValues: report.sessions.map { ($0.id, $0) })
         XCTAssertEqual(Set(sessions.keys), ["parent", "other"], "sub-agents are not sessions of their own")
         XCTAssertEqual(sessions["parent"]?.subagentTranscripts?.map { URL(fileURLWithPath: $0).lastPathComponent },
-                       ["rollout-child.jsonl", "rollout-guardian.jsonl"], "a guardian of the spawned agent is below the session too")
+                       ["rollout-child.jsonl", "rollout-grandchild.jsonl", "rollout-guardian.jsonl"], "a guardian of the spawned agent is below the session too")
         XCTAssertNil(sessions["other"]?.subagentTranscripts)
+        let child = try XCTUnwrap(sessions["parent"]?.subagentSessions?.first)
+        XCTAssertEqual(sessions["parent"]?.transcriptPath.map { URL(fileURLWithPath: $0).lastPathComponent }, "rollout-parent.jsonl",
+                       "a newer child file never replaces the root's transcript")
+        XCTAssertEqual(sessions["parent"]?.subagentSessions?.map(\.id), ["child"])
+        XCTAssertEqual(child.id, "child")
+        XCTAssertEqual(child.agentName, "child")
+        XCTAssertEqual(child.task, "Review the parser")
+        XCTAssertEqual(child.workingDirectory, "/child")
+        XCTAssertEqual(child.tokensIn, 80)
+        XCTAssertEqual(child.cacheReadTokens, 20)
+        XCTAssertEqual(child.tokensOut, 10)
+        XCTAssertEqual(child.transcriptPath.map { URL(fileURLWithPath: $0).lastPathComponent }, "rollout-child.jsonl")
+        XCTAssertEqual(child.subagentSessions?.map(\.id), ["grandchild"], "internal guardians do not become visible agents")
+        XCTAssertEqual(child.subagentSessions?.first?.agentName, "Curie")
+        XCTAssertEqual(report.turns.map(\.sessionID), ["child"])
     }
 
     func testQuotaFailureKeepsLocalSessions() async throws {
@@ -436,6 +678,35 @@ final class CodexProviderTests: XCTestCase {
         XCTAssertTrue(report.snapshots.isEmpty)
         XCTAssertEqual(report.sourceNotices["Codex"], "signed out")
         XCTAssertNil(report.codexResetCredits)
+    }
+
+    func testCompletionsUseTheCurrentConversationTitleWithoutChangingIdentity() async throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let index = dir.appendingPathComponent("session_index.jsonl")
+        let contents = [
+            line(type: "session_meta", payload: ["id": "session", "source": "cli", "cwd": "/project"]),
+            line(payload: ["type": "user_message", "message": "First question"]),
+            line(payload: ["type": "task_started", "turn_id": "turn"]),
+            line(payload: ["type": "task_complete", "turn_id": "turn", "last_agent_message": "Final answer"]),
+        ].joined(separator: "\n") + "\n"
+        try contents.write(to: dir.appendingPathComponent("rollout-session.jsonl"), atomically: true, encoding: .utf8)
+        let provider = CodexUsageProvider(readLimits: { throw UsageProviderError("signed out") },
+            transcripts: CodexTranscriptStore(roots: [dir], indexURL: index), history: QuotaHistoryStore())
+        let fallback = try await provider.fetchUsage(agents: [], historyHours: 48)
+        XCTAssertEqual(fallback.completions.first?.task, "First question")
+
+        try #"{"id":"session","thread_name":"Automatic update checks"}"#.write(to: index, atomically: true, encoding: .utf8)
+        let named = try await provider.fetchUsage(agents: [], historyHours: 48)
+        XCTAssertEqual(named.sessions.first?.task, "Automatic update checks")
+        XCTAssertEqual(named.completions.first?.task, named.sessions.first?.task)
+        XCTAssertEqual(named.completions.first?.message, "Final answer")
+        XCTAssertEqual(named.completions.first?.id, fallback.completions.first?.id, "a conversation rename does not produce a new completion")
+
+        try #"{"id":"session","thread_name":"A renamed conversation"}"#.write(to: index, atomically: true, encoding: .utf8)
+        let renamed = try await provider.fetchUsage(agents: [], historyHours: 48)
+        XCTAssertEqual(renamed.completions.first?.task, "A renamed conversation")
+        XCTAssertEqual(renamed.completions.first?.id, named.completions.first?.id)
     }
 
     func testForecastUsesEachServicesWindowPeriodAndRecentPace() async throws {
@@ -465,6 +736,9 @@ final class CodexProviderTests: XCTestCase {
         let report = try await provider.fetchAccountAndLocalUsage(agents: [], historyHours: 24)
         XCTAssertEqual(report.snapshot(for: account.windowID("codex"))?.windowDuration, 7 * 86400)
         XCTAssertEqual(report.snapshot(for: account.windowID("codex:spark:primary"))?.windowDuration, 5 * 3600)
+        XCTAssertEqual(report.observation(accountID: account.id)?.quotaWindowIDs,
+                       Set(["codex", "codex:spark:primary", "codex:unknown:primary"].map(account.windowID)),
+                       "The rate-limit response explicitly supplies its complete inventory, including a window without a known cadence")
         let weekly = try XCTUnwrap(report.insightsByAgent[account.windowID("codex")])
         XCTAssertEqual(try XCTUnwrap(weekly.burnRatePctPerHour), 10.0 / 30, accuracy: 1e-9,
                        "the statistics range must not truncate the readings behind the last day")
@@ -482,16 +756,18 @@ final class CodexProviderTests: XCTestCase {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
-    private func line(type: String = "event_msg", payload: [String: Any], at: String = "2026-09-07T09:00:00Z") -> String {
-        String(decoding: try! JSONSerialization.data(withJSONObject: ["type":type,"timestamp":at,"payload":payload], options: .sortedKeys), as: UTF8.self)
+    private func line(type: String = "event_msg", payload: [String: Any], at: String = "2026-09-07T09:00:00Z", ordinal: Int? = nil) -> String {
+        var object: [String: Any] = ["type": type, "timestamp": at, "payload": payload]
+        object["ordinal"] = ordinal
+        return String(decoding: try! JSONSerialization.data(withJSONObject: object, options: .sortedKeys), as: UTF8.self)
     }
-    private func ingest(_ t: inout CodexTranscript, type: String = "event_msg", payload: [String: Any], at: String = "2026-09-07T09:00:00Z") {
-        t.ingest(Data(line(type: type, payload: payload, at: at).utf8))
+    private func ingest(_ t: inout CodexTranscript, type: String = "event_msg", payload: [String: Any], at: String = "2026-09-07T09:00:00Z", ordinal: Int? = nil) {
+        t.ingest(Data(line(type: type, payload: payload, at: at, ordinal: ordinal).utf8))
     }
     private func ingest(_ t: inout CodexTranscript, type: String = "event_msg", payload: [String: Any], at date: Date) {
         ingest(&t, type: type, payload: payload, at: date.ISO8601Format())
     }
-    private func token(_ t: inout CodexTranscript, input: Int, cached: Int, output: Int, at: String = "2026-09-07T09:00:00Z") {
-        ingest(&t, payload: ["type":"token_count", "info":["total_token_usage":["input_tokens":input,"cached_input_tokens":cached,"output_tokens":output]]], at: at)
+    private func token(_ t: inout CodexTranscript, input: Int, cached: Int, output: Int, at: String = "2026-09-07T09:00:00Z", ordinal: Int? = nil) {
+        ingest(&t, payload: ["type":"token_count", "info":["total_token_usage":["input_tokens":input,"cached_input_tokens":cached,"output_tokens":output]]], at: at, ordinal: ordinal)
     }
 }

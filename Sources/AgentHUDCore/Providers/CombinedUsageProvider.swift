@@ -26,6 +26,7 @@ public struct CombinedUsageProvider: UsageProvider {
         /// Each session's breakdown with the counts it was read at, valid while the ledger keeps the writes it was read from.
         struct Breakdown: Sendable {
             let counts: [Int]
+            let request: SessionUsageRequest
             let usage: SessionUsage?
         }
         private var breakdowns: [String: Breakdown] = [:]
@@ -118,8 +119,9 @@ public struct CombinedUsageProvider: UsageProvider {
                 quotaNotices.merge(report.quotaNotices ?? report.sourceNotices, uniquingKeysWith: { _, new in new })
                 issues.merge(report.typedReadingIssues, uniquingKeysWith: { _, new in new })
             }
-            // A source that failed, or said what went wrong without filing it under a vendor, failed to read.
-            if let message = error ?? (report?.sourceNotices.isEmpty == true ? report?.notice : nil) {
+            // An unclassified notice is a failed source. Explicitly classified account failures keep their scope.
+            if let message = error ?? (report?.sourceNotices.isEmpty == true && report?.readingIssues == nil
+                && report?.quotaNotices == nil ? report?.notice : nil) {
                 notices[vendors[index].vendor] = message
                 quotaNotices[vendors[index].vendor] = message
                 issues[vendors[index].vendor] = .readFailed(message)
@@ -135,7 +137,7 @@ public struct CombinedUsageProvider: UsageProvider {
         let usage = ((try? await ledger.buckets(since: since)) ?? []) + reported
         var periods = (try? await ledger.periods(endingAt: now)) ?? UsagePeriods()
         periods.add(reported, endingAt: now)
-        let sessions = reports.flatMap(\.sessions)
+        let sessions = GrokBotUsage.merge(reports.flatMap(\.sessions))
         let progress = reports.compactMap(\.indexing)
         let sessionUsage = await breakdowns(of: sessions)
         return UsageReport(generatedAt: now, snapshots: Dictionary(grouping: reports.flatMap(\.snapshots), by: \.agentId).values.compactMap { $0.max { $0.updatedAt < $1.updatedAt } }.sorted { $0.agentId < $1.agentId },
@@ -168,13 +170,14 @@ public struct CombinedUsageProvider: UsageProvider {
     /// Where each session's tokens went. A session is read again when its counts move or when the ledger has written any
     /// log it is made of since its breakdown was read: sub-agents spend without the session's own log changing, and a
     /// source can record a session's events a pass or more after first reporting it.
-    private func breakdowns(of sessions: [LiveSession]) async -> [String: SessionUsage] {
+    private func breakdowns(of roots: [LiveSession]) async -> [String: SessionUsage] {
+        let sessions = roots.flatMap { [$0] + $0.descendantSessions }
         let (known, mark) = await results.breakdowns(generation: await ledger.generation)
         let changed = await ledger.changedKeys(after: mark), now = await ledger.writeMark
         var kept: [String: Results.Breakdown] = [:], requests: [SessionUsageRequest] = []
         for session in sessions {
             let counts = [session.tokensIn, session.tokensOut, session.cacheReadTokens], request = SessionUsageRequest(session)
-            if let breakdown = known[session.id], breakdown.counts == counts, !request.touches(changed) {
+            if let breakdown = known[session.id], breakdown.counts == counts, breakdown.request == request, !request.touches(changed) {
                 kept[session.id] = breakdown
             } else {
                 requests.append(request)
@@ -182,7 +185,7 @@ public struct CombinedUsageProvider: UsageProvider {
         }
         if !requests.isEmpty, let read = try? await ledger.sessionUsage(requests) {
             let counts = Dictionary(sessions.map { ($0.id, [$0.tokensIn, $0.tokensOut, $0.cacheReadTokens]) }, uniquingKeysWith: { first, _ in first })
-            for request in requests { kept[request.sessionID] = .init(counts: counts[request.sessionID] ?? [], usage: read[request.sessionID]) }
+            for request in requests { kept[request.sessionID] = .init(counts: counts[request.sessionID] ?? [], request: request, usage: read[request.sessionID]) }
             await results.storeBreakdowns(kept, mark: now)
         } else {
             // Nothing could be read: keep what was known, and the mark it was read at, so the next pass reads it again.

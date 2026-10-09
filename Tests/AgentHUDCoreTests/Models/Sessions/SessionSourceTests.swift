@@ -76,6 +76,58 @@ final class SessionSourceTests: XCTestCase {
         XCTAssertEqual(SessionSource.vendor(impliedBy: "antigravity"), "Antigravity")
     }
 
+    func testGrokExecutionClientsKeepTheirSharedProvider() {
+        let cli = SessionSource(vendor: "Grok", client: "Grok CLI")
+        let bot = SessionSource(vendor: "Grok", client: "Grok Bot")
+        XCTAssertEqual(cli, SessionSource(vendor: "Grok", client: nil), "older sessions belong to the CLI")
+        XCTAssertNotEqual(cli, bot)
+        XCTAssertEqual(cli.vendor, "Grok")
+        XCTAssertEqual(bot.vendor, "Grok")
+        XCTAssertEqual(cli.agentVendor, "Grok CLI")
+        XCTAssertEqual(bot.agentVendor, "Grok Bot")
+        XCTAssertEqual(cli.name, "Grok CLI")
+        XCTAssertEqual(bot.name, "Grok Bot")
+        XCTAssertEqual(SessionSource(vendor: "Grok", client: "Future client").agentVendor, "Future client")
+        XCTAssertEqual(SessionSource(vendor: "Codex", client: "Desktop").agentVendor, "Codex")
+        XCTAssertNil(SessionSource(vendor: nil, client: "Unknown client").agentVendor)
+        XCTAssertTrue(SessionSource.agentVendors.contains("Grok CLI"))
+        XCTAssertTrue(SessionSource.agentVendors.contains("Grok Bot"))
+        XCTAssertFalse(SessionSource.agentVendors.contains("Grok"), "the account provider is not an execution client")
+    }
+
+    func testCursorMeteredBotUsesItsNativeExecutionProviderAndClient() {
+        let bot = SessionSource(vendor: "Cursor", client: "Grok Bot")
+        XCTAssertEqual(bot.vendor, "Grok")
+        XCTAssertEqual(bot.name, "Grok Bot")
+        XCTAssertEqual(bot.agentVendor, "Grok Bot")
+        XCTAssertEqual(SessionSource(vendor: "Cursor", client: "Cursor").agentVendor, "Cursor")
+        XCTAssertEqual(SessionSource(vendor: "Cursor", client: "Future client").agentVendor, "Cursor")
+        XCTAssertEqual(SessionSource.vendor(impliedBy: "cursor-model:grok-bot-default"), "Cursor",
+                       "the dashboard model identity still belongs to the Cursor billing source")
+    }
+
+    func testCursorMeteredBotUsesTheBotLiveStatusSwitch() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let model = AgentDescriptor(id: "cursor-model:grok-bot-default", vendor: "Cursor", model: "grok-bot-default",
+                                    source: "fixture", enabled: false)
+        let session = LiveSession(id: "grok-bot:slot:agent", agentId: model.id, task: "Bot task", terminal: nil,
+                                  startedAt: now, pctOfWindow: nil, tokensIn: 10, tokensOut: 2, client: "Grok Bot")
+        let report = UsageReport(generatedAt: now, snapshots: [], sessions: [session], consumers: [model])
+        var settings = Settings()
+        settings.setLiveStatus(for: "Cursor", enabled: false)
+        settings.setLiveStatus(for: "Grok Bot", enabled: true)
+        let on = try XCTUnwrap(ReportView(report: report, agents: [model], settings: settings, now: now).session(session.id))
+        XCTAssertEqual(on.source.vendor, "Grok")
+        XCTAssertEqual(on.source.agentVendor, "Grok Bot")
+        XCTAssertEqual(model.vendor, "Cursor", "the session's execution provider does not rename its billing consumer")
+        XCTAssertTrue(on.liveStatus, "neither the Cursor live-status switch nor a disabled quota row suppresses Bot status")
+
+        settings.setLiveStatus(for: "Cursor", enabled: true)
+        settings.setLiveStatus(for: "Grok Bot", enabled: false)
+        let off = try XCTUnwrap(ReportView(report: report, agents: [model], settings: settings, now: now).session(session.id))
+        XCTAssertFalse(off.liveStatus, "enabling Cursor does not override the Bot's own saved switch")
+    }
+
     @MainActor
     func testStoreResolvesSourcesEvenWhenQuotaAgentIsDisabled() {
         let suite = "AgentHUDSessionSourceTests.\(UUID().uuidString)"

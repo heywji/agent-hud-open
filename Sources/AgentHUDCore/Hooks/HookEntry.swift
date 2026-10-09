@@ -21,6 +21,14 @@ public enum HookEntry {
         guard arguments.count == 3 else { return nil }
         let name = arguments[2]
         switch arguments[1] {
+        case "--session-origin-hook":
+            switch name {
+            case "codex": try? CodexSessionOrigins.record(data: input())
+            case "claude": try? ClaudeSessionOrigins.record(data: input())
+            default: return nil
+            }
+            print("{}")
+            return 0
         case "--completion-hook":
             guard let source = CompletionHooks.Source(rawValue: name) else { return nil }
             // Local status tracking must not affect the agent's execution.
@@ -36,6 +44,7 @@ public enum HookEntry {
             // The client waits on this one: it holds the request open until the user answers on the HUD, and prints
             // nothing when it cannot be answered, which leaves the client's own permission prompt exactly as it was.
             guard let source = PermissionHooks.Source(rawValue: name) else { return nil }
+            guard source.usesHook else { return 0 }
             PermissionHookClient.run(source: source)
             return 0
         case "--install-completion-hook":

@@ -283,6 +283,38 @@ final class UsageLedgerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(second.sessionUsage?["w1"]?.total.tokensIn, 7)
     }
 
+    func testChildDetailsHaveTheirOwnBreakdownsAndRefreshWhenDescendantsSpend() async throws {
+        let ledger = UsageLedger.inMemory()
+        let grandchild = LiveSession(id: "grandchild", agentId: "codex-model:gpt-5", task: "Task", terminal: nil,
+            startedAt: base, pctOfWindow: nil, tokensIn: 7, tokensOut: 0, transcriptPath: "r/grandchild.jsonl")
+        let child = LiveSession(id: "child", agentId: grandchild.agentId, task: "Task", terminal: nil,
+            startedAt: base, pctOfWindow: nil, tokensIn: 30, tokensOut: 0, transcriptPath: "r/child.jsonl",
+            subagentTranscripts: ["r/grandchild.jsonl", "r/guardian.jsonl"], subagentSessions: [grandchild])
+        let root = LiveSession(id: "root", agentId: child.agentId, task: "Task", terminal: nil,
+            startedAt: base, pctOfWindow: nil, tokensIn: 100, tokensOut: 0, transcriptPath: "r/root.jsonl",
+            subagentTranscripts: ["r/child.jsonl", "r/grandchild.jsonl", "r/guardian.jsonl"], subagentSessions: [child])
+        let provider = CombinedUsageProvider([.init("Codex", Reporting(sessions: [root]))], ledger: ledger)
+        try await ledger.write { writer in
+            for (name, tokens) in [("root", 100), ("child", 30), ("grandchild", 7), ("guardian", 9)] {
+                try writer.upsert(source: "codex", contribution: "r/\(name).jsonl",
+                                  events: [self.event(name, minute: 1, agent: "codex-model:gpt-5", input: tokens)])
+            }
+        }
+        let first = try await provider.fetchUsage(agents: [], historyHours: 24)
+        XCTAssertEqual(first.sessions.map(\.id), ["root"])
+        XCTAssertEqual(first.sessionUsage?["root"]?.total.tokensIn, 146)
+        XCTAssertEqual(first.sessionUsage?["child"]?.total.tokensIn, 46)
+        XCTAssertEqual(first.sessionUsage?["child"]?.subagents?.tokensIn, 16)
+        XCTAssertEqual(first.sessionUsage?["grandchild"]?.total.tokensIn, 7)
+        try await ledger.write { try $0.upsert(source: "codex", contribution: "r/grandchild.jsonl",
+            events: [self.event("next", minute: 2, agent: "codex-model:gpt-5", input: 4)]) }
+        let second = try await provider.fetchUsage(agents: [], historyHours: 24)
+        XCTAssertEqual(second.sessionUsage?["root"]?.total.tokensIn, 150)
+        XCTAssertEqual(second.sessionUsage?["child"]?.total.tokensIn, 50)
+        XCTAssertEqual(second.sessionUsage?["grandchild"]?.total.tokensIn, 11,
+                       "unchanged session counters do not hide a descendant's newly indexed usage")
+    }
+
     func testWindowedReplacementKeepsOlderEvents() async throws {
         let ledger = UsageLedger.inMemory(), since = base.addingTimeInterval(3600)
         try await ledger.write { try $0.replace(source: "hermes", contribution: "s", events: [
@@ -383,6 +415,57 @@ final class UsageLedgerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(buckets.map(\.tokensIn), [7])
         let samples = try await reopened.samples(scope: "codex", windowID: "codex", since: .distantPast)
         XCTAssertEqual(samples.map(\.remainingPct), [40])
+    }
+
+    func testBalanceReadingsAreKeptForADayInEachCurrency() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("ledger.sqlite")
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        @Sendable func balances(_ cny: String, _ usd: String) -> [AccountBalance] {
+            [AccountBalance(currency: "CNY", total: Decimal(string: cny)!, granted: 0, toppedUp: Decimal(string: cny)!),
+             AccountBalance(currency: "USD", total: Decimal(string: usd)!, granted: 0, toppedUp: Decimal(string: usd)!)]
+        }
+        do {
+            let ledger = try UsageLedger(url: url, expires: true)
+            try await ledger.write { writer in
+                try writer.appendBalances(balances("12.34", "2.5"), billing: "DeepSeek", at: now.addingTimeInterval(-BalanceTrend.lookback - 60))
+                try writer.appendBalances(balances("8.85", "2"), billing: "DeepSeek", at: now.addingTimeInterval(-3600))
+                try writer.appendBalances(balances("8.8", "1.99"), billing: "DeepSeek", at: now)
+                try writer.appendBalances(balances("8.8", "1.99"), billing: "DeepSeek", at: now)
+            }
+            try await ledger.expire(now: now)
+        }
+        let reopened = try UsageLedger(url: url)
+        let cny = try await reopened.balanceSamples(billing: "DeepSeek", currency: "CNY", since: .distantPast)
+        XCTAssertEqual(cny, [BalanceSample(timestamp: now.addingTimeInterval(-3600), amount: Decimal(string: "8.85")!),
+                             BalanceSample(timestamp: now, amount: Decimal(string: "8.8")!)], "a day's readings, each once, as exact amounts")
+        let usd = try await reopened.balanceSamples(billing: "DeepSeek", currency: "USD", since: now)
+        XCTAssertEqual(usd.map(\.amount), [Decimal(string: "1.99")!])
+        let other = try await reopened.balanceSamples(billing: "pool:other", currency: "CNY", since: .distantPast)
+        XCTAssertTrue(other.isEmpty)
+    }
+
+    /// A ledger from a version that kept no balances gains their table when it opens.
+    func testALedgerWrittenBeforeBalancesWereKeptGainsTheirTable() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("ledger.sqlite")
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        do {
+            let ledger = try UsageLedger(url: url)
+            try await ledger.write { try $0.appendSamples([QuotaSample(agentId: "codex", timestamp: now, remainingPct: 40)], scope: "codex") }
+        }
+        do {
+            let earlier = try SQLiteConnection(url: url)
+            try earlier.execute("DROP TABLE balance_sample; PRAGMA user_version = 3;")
+        }
+        let reopened = try UsageLedger(url: url)
+        try await reopened.write { try $0.appendBalances([AccountBalance(currency: "CNY", total: 5, granted: 0, toppedUp: 5)], billing: "DeepSeek", at: now) }
+        let balances = try await reopened.balanceSamples(billing: "DeepSeek", currency: "CNY", since: .distantPast)
+        XCTAssertEqual(balances.map(\.amount), [5])
+        let samples = try await reopened.samples(scope: "codex", windowID: "codex", since: .distantPast)
+        XCTAssertEqual(samples.map(\.remainingPct), [40], "what the ledger held stays")
     }
 }
 

@@ -1,6 +1,124 @@
 # Changelog
 
-Releases of Agent HUD Open. A version is a git tag `vX.Y.Z` on `main`; `CFBundleShortVersionString` in `scripts/build-app.sh` carries the same number. Each entry lists what changed for people using the application and, under **Host API**, what changed for applications that embed `AgentHUDCore` and `AgentHUDDesktop`. Dates are tag dates.
+Releases of Agent HUD Open. A version is a git tag `vX.Y.Z` or `vX.Y.Z-beta.N` on `main`; `CFBundleShortVersionString` in `scripts/build-app.sh` carries the three-part numeric version `X.Y.Z`. Each entry lists what changed for people using the application and, under **Host API**, what changed for applications that embed `AgentHUDCore` and `AgentHUDDesktop`. Dates are tag dates.
+
+## 0.4.38 — 2026-10-09
+
+- Bot subagent billing conversations use their native identity namespace to show Grok Bot as the execution client, even when absent from the local conversation roster. Their titles include distinct subagent IDs, and their Cursor billing totals count once.
+- Expanded reply reminders have a visible close button. Closing a reply advances the event queue while leaving waiting permissions unanswered.
+
+## 0.4.37 — 2026-10-09
+
+- Grok Bot sessions show token usage and billing model identifiers from Cursor dashboard conversations with the same native agent ID. Matched sessions retain their Bot title, conversation and navigation, while unmatched conversations stay under Cursor; billing events count once.
+- Host API: `LiveSession.usageKey` optionally references another provider's canonical ledger contribution. `SessionUsageRequest` uses that contribution for the session's own breakdown and calls; execution identity and billing consumer identity remain separate.
+- Grok accounts and quota stay under Grok. Grok CLI and Grok Bot have distinct client entries and artwork; Bot installation is detected independently, with its session reading capability shown explicitly.
+- Grok CLI sessions can return to their verified live iTerm pane, and Grok Bot sessions open their native Agent view. Bot's account-scoped local conversation cache and Antigravity's SQLite conversation text are available to read-only conversation consumers; Bot cache gaps and unavailable live state stay explicit.
+- Grok can use an unexpired personal Bot quota cache when CLI quota is unavailable, keeping the original read time. Account headers show quota failures in yellow and local-data notices in secondary text; overlapping CLI log formats warn only when older usage lies outside the inference history.
+- Host API: `SourceStatus.provider` groups execution clients under their account provider; `supportsLiveStatus` describes the client's reading capability. `AgentSettingsGroup.clients` lists those execution clients, and `SessionSource.agentVendor` selects client-specific status and artwork without changing the account provider.
+- Host API: `SessionCompletion.client` optionally names its execution client, including in serialized records; older records keep their existing provider identity. `agentVendor` supplies its client-specific presentation name.
+- Sessions from one Git repository, including its worktrees, share a project group. Directories outside Git keep their recorded path.
+- Codex session details list their direct sub-agents, each with its own name, task, workspace, status and usage breakdown. Open a child and return to its parent; copied parent history no longer replaces a fork's identity or counts its inherited usage again.
+- The distributed Agent HUD Mac app supports local-network viewing from compatible iPhones, with automatic connection or QR pairing. Shared sessions preserve their project paths and Codex parent-child relationships.
+- Host API: `LiveSession.agentName` and `subagentSessions` represent the child-session tree. `ReportView.session(_:)` resolves descendants, and `parentSession(of:)` finds a direct parent. `SessionProject` groups a repository and its worktrees.
+- ZCode questions can be answered on the HUD. Compatible DeepSeek Harness web hosts expose questions through their local event API; other hosts keep questions in Harness.
+- The hover panel prioritizes waiting and running sessions, shows client marks and keeps a short recently ended list. Session titles without a client destination open their details, and question badges offer inline answers.
+- The HUD shows quota and balances, then Tokens, then local sessions. Tokens always show the latest 24 hours in 96 quarter-hour columns with every token kind, independently of Dashboard filters; account-wide billing receipts no longer displace local sessions or inflate the hidden-running count.
+- Hover glow and shadow preparation runs in the background and reuses matching installed materials. The distributed Mac app also prepares shared readings in the background and combines redundant refreshes, preserving responsive window interactions during synchronization.
+- Host API: `PermissionDecision.answer` carries `[String: PermissionQuestion.Answer]`, separating selected labels from custom text. `PermissionQuestion.id` is optional; `answerKey` uses that identity when present. Hook responses still serialize answers under the original question text.
+
+## 0.4.36 — 2026-10-08
+
+- Completion reminders offer separate actions for returning to the agent and viewing token usage. In Active sessions, the title returns to the agent, the token count opens that session's usage, and the heading opens the session list.
+- Native return targets are captured for Codex Desktop, Claude Desktop Code and Cowork through exact session mapping, and Antigravity's running standalone app. Codex CLI, Claude Code CLI, Pi and OpenCode can return to their existing iTerm2 pane when a terminal destination is available.
+- New replies and permission requests share an event panel, separate from usage, with one card open and the remaining replies and requests available to select. Replies arriving during approval remain available without answering the waiting request.
+- A failed session return keeps the reminder available for retry or token usage. Missing destinations leave usage available, and newer source observations replace stale return targets.
+- Button hit areas include the space between icons and text; token bars stay inside their cards, and the Active sessions heading matches Tokens.
+- Holding Command no longer draws a dashed outline around the HUD; drag outlines appear during repositioning.
+- Host API:
+  - `SessionNavigationTarget` carries native client identities. `LiveSession.navigationTarget` and `SessionCompletion.navigationTarget` are optional, with initializer arguments defaulting to `nil`; they stay in local memory and are excluded from session reports, report caches and remote serialization.
+  - `CodexSessionOrigins` and `ClaudeSessionOrigins` expose local origin records and hook configuration. `SessionObservers.configure(executable:enabled:home:)` manages these hooks with the existing client-hook setting, and `HookEntry.handle(arguments:)` accepts `--session-origin-hook codex|claude`.
+
+## 0.4.35 — 2026-10-07
+
+- Antigravity quota refreshes request a fresh summary as its native quota popover does, avoiding stale cached readings; older per-model readings do not replace an available summary.
+- Antigravity local token accounting uses the recorded counters, includes cache writes in input and counts thinking tokens only once within output. Usage records match their recorded timestamps through exact message or execution identifiers.
+- False Antigravity local-session warnings from summary databases and failed generations without token usage are fixed. Usage that genuinely lacks a verifiable timestamp remains excluded with a warning.
+- Account-wide reading warnings appear only under current accounts, rather than repeating under retained accounts; client-home and account-specific notices keep their own scope.
+- Antigravity's native permission requests can be answered from the HUD with Allow once or Deny, without installing an execution hook or changing its permission settings. Requests answered in Antigravity disappear automatically; dismissing a request leaves its native prompt unanswered.
+- Codex completion reminders use the current conversation title and show the last paragraph of the final reply when available. The View token usage button opens the session's usage statistics.
+- Host API:
+  - `PermissionHooks.Source.antigravity` identifies approvals supplied by Antigravity's running local service; its `usesHook` is `false`.
+  - `SessionCompletion.message` holds an optional final-reply preview only in memory. Its initializer's `message` argument defaults to `nil`; the preview is excluded from serialization, preserving the existing encoded format.
+
+## 0.4.34 — 2026-10-07
+
+- Long usage panels fit the display height and scroll above a fixed footer, keeping Settings, Stats and host controls visible.
+- Dynamic Dock can be dragged to any position along all four display edges; hidden logos reveal their drag area while Command is held. Display settings can reset its position.
+- Panel height, glow and shadow are prepared during the hover delay without retaining a hidden panel. Hidden glow previews stop rendering, and HUD glow animations share their drawing budget.
+- Opening and closing keep the dock's contact edge fixed and clean up the native window after the geometry animation completes.
+- An optional setting opens the HUD immediately when the pointer reaches the display's top edge directly above it; other hover opening keeps the configured delay.
+- Statistics windows restore their content size correctly after restoring a minimized window.
+- Host API: `Settings.openImmediatelyAtTop` defaults to `false`; existing settings and desktop host entry points remain compatible.
+
+## 0.4.34-beta.4 — 2026-10-03
+
+- The distributed Mac application's New Version menu entry uses blue text with the regular menu font.
+- Host API: additional menu items retain their attributed title in the shared menu row, including its foreground color and font. The selected row still uses the system selection text color.
+
+## 0.4.34-beta.3 — 2026-10-03
+
+- The distributed Mac application announces available updates with a download button beside Stats in the HUD and a New Version entry below Settings in its existing menu. Background checks do not open an update window; either entry opens it when selected.
+- Host API: `DesktopApplication(..., additionalHUDControls:)` accepts a main-actor view factory for controls immediately before the expanded HUD's Stats button. The factory receives a dismissal action for that display's HUD, which a host calls before opening another window. The default adds no controls; service state remains in the embedding application.
+
+## 0.4.32 — 2026-10-03
+
+- The distributed Mac application's Subscription page uses clearer account requirements, activation status and license-removal explanations.
+- Agent HUD Open and the Host API are unchanged from 0.4.31.
+
+## 0.4.31 — 2026-10-03
+
+- Turn notifications say New reply and use a blue speech bubble, distinguishing them from quota recovery and warnings.
+- The distributed Mac application's update check is in Settings → Updates; the menu contains Settings and Quit.
+- iPhone and Apple Watch sync still requires Agent HUD for iPhone 1.4 or later.
+- Host API: unchanged.
+
+## 0.4.30 — 2026-10-02
+
+- The distributed Agent HUD Mac application requires Agent HUD for iPhone 1.4 or later for iPhone and Apple Watch sync. Update the iPhone app before updating the Mac; iPhone 1.3 cannot read this release's data.
+- The distributed Mac application checks for stable releases and offers to download, verify and install updates. Automatic downloading and installation can be enabled in Settings; desktop betas are excluded.
+- Includes the desktop improvements listed under 0.4.30-beta.1 below.
+- Host API:
+  - `DesktopApplication.additionalMenuItems` lets an embedding application add its own menu items after the desktop settings entry. The standalone open-source application has no updater dependency.
+
+## 0.4.30-beta.1 — 2026-10-02
+
+- This is a Mac desktop beta distribution: the distributed Agent HUD Mac beta disables Agent HUD Remote; keep Agent HUD 0.4.29 on your Mac to sync with the iPhone app version 1.3.
+- Quota windows are named in their vendors' own words, in Chinese as each vendor writes it where it does. Claude's read Current session, Weekly limit · All models and Weekly limit · Fable (当前会话, 每周限制 · 所有模型, 每周限制 · Fable), where they read Session · 5h, Weekly · all models and Weekly · Fable (当前会话 · 5h, 本周 · 全部模型, 本周 · Fable). Codex's read as its own client names them, 5h limit, Weekly limit and Luna Reserve · Weekly limit (5 小时额度, 每周额度, Luna Reserve · 每周额度), where they read 5h, Weekly (本周) and Luna Reserve · Weekly; a window of a day, a month or a year is a Daily, Monthly or Annual limit, one of another length an Nh or Nm limit, and one without a length Usage limit or Secondary usage limit, where it was Primary or Secondary (主额度, 次额度).
+- Cursor's windows read Included usage, Cursor Models, Other Models, Individual spending limit, Pooled usage and On-demand usage (包含用量, Cursor 模型, 其他模型, 个人支出限额, 共享用量, 按需用量), where they read Plan usage, Cursor models, Third-party models, Personal budget, Team pool and Extra usage budget (套餐总额度, Cursor 模型, 第三方模型, 个人预算, 团队共享额度, 额外用量预算). Grok's read Weekly usage limit or Monthly usage limit (每周用量额度, 每月用量额度), Usage limit (用量额度) when the service names no period, and Extra usage (额外用量), where they read Weekly credits, Monthly credits, Subscription credits and Extra usage budget (每周额度, 每月额度, 订阅额度, 额外用量预算). GitHub Copilot's chat and completions windows read Chat messages (聊天消息) and Code completions, where they read Chat (对话) and Completions. Antigravity's earlier per-model windows read Gemini Models and Claude and GPT models, where they read Gemini and Claude + GPT.
+- A Kimi, GLM or OpenCode Go window is named by its period and then its plan, in the vendor's words: 5-hour quota, Weekly quota and Monthly total quota for Kimi (5 小时额度, 周额度, 月总额度), 5-hour credits, Weekly credits, 5-hour limit, Weekly limit and MCP usage (1 month) for GLM (5 小时积分, 每周积分, 每 5 小时限额, 每周限额, MCP 每月用量), and 5-hour limit, Weekly limit and Monthly limit for OpenCode Go (5 小时限制, 每周限制, 每月限制), which reports no plan. They read as the service's units or keys with the pool's label, such as 7d · CN · PLAN · Account 15e866 · Allegretto, 300m or rolling, and Kimi's month and GLM's credits wrote their plan twice. The pool's label, such as CN · PLAN · Account 15e866, now names the account above its windows, where the account read Account 15e866.
+- Every window also has a short name, which the menu uses for its row when it lists a single one, and which a host shows in tight places. It keeps only what tells the window apart from the account's other windows, in the same period words for every vendor: 5h, Daily, Weekly, Monthly and Annual (每日, 每周, 每月, 每年), any other length as its unit; a Claude model family by its name (Fable), a Codex bucket or an Antigravity group by its word and, where it has two windows, its period, with the week as 7d in English (Reserve, Spark 5h, Spark 7d, Gemini 5h, 3rd-party 7d); and a window named by its kind by the vendor's word for it (Included, First-party, Third-party, Spend limit, Pooled, On-demand, Premium, Credits, Chat, Completions, Extra). The menu took the full name's first word, such as Session, Weekly Fable, Luna, Cursor or 300m. Two windows of one account that would read alike keep their full names, except a GLM token limit and credits of one length, which read Tokens 5h and Credits 5h.
+- A quota row in the panel whose full name is too long for its column shows the window's short name, such as Weekly for Claude's Weekly limit · All models and Reserve for Luna Reserve · Weekly limit in English, where a long name was cut short with an ellipsis. A name that fits is shown in full.
+- Window ids do not change, so every window keeps its switch and its place.
+- A Codex session run in the desktop app signed in to a work workspace, whose rollout names its client `codex_work_desktop`, is filed under Codex Desktop with the app's other sessions, in the list, on its page and in the Sessions filter, where it showed that name as written. So are the other names Codex's own code gives its desktop app and CLI: `codex_desktop` under Codex Desktop, and `codex_cli_rs` and `codex-cli` under Codex CLI.
+- A model a Kimi, OpenCode or Pi session ran on is named without the route its calls went through where the name already shows it: Kimi Code's plan model reads Kimi For Coding, as Kimi names it, where it read kimi-code/kimi-for-coding · kimi-code, or kimi-for-coding · kimi-coding through Pi, and so does a Claude Code session that calls it, and another model Kimi Code logs under its route reads without the route, such as real-model for kimi-code/real-model · kimi-code. A model called through another route keeps it beside the name, such as kimi-k2 · moonshotai, and one logged without a route no longer ends in " · ".
+- Host API:
+  - `AgentDescriptor.shortName` gives a window's short name: the one its provider built, which `AgentDescriptor.shortModel` holds and `init` takes as `shortModel:`, else `L10n.shortModelLabel(_:)` of `model`, which now gives Claude's windows theirs; a window without a short name gives its full name. `name` and `L10n.modelLabel(_:)` give the vendors' names. `SettingsStore.mergeDiscovered` refreshes a row's short name with its name.
+  - `WindowNames` holds the naming rules: `Period(seconds:)` reads a window's length as Codex's client does, within 5 %, with its `shortName` and its `afterWord` form (7d for the week in English); `word(_:)` is the word a long service name is known by, `leading(_:)` keeps a name of up to eight characters whole and else its first word, and `distinct(_:)` gives up the short names that would read alike within one account. `VendorCatalog.windowWord(_:vendor:)` and `VendorCatalog.Entry.windowWords` name a service's window in short (`gpt-reserve` → Reserve). `CodexRateLimits.Row.shortLabel` is a Codex window's short name.
+  - `QuotaAlert.otherExhaustedWindows` lists the account's other exhausted windows as `AgentDescriptor`s, which the island names through their descriptors; it listed their models.
+  - A Kimi, GLM or OpenCode Go account's `AccountObservation.label` is its pool's label.
+  - `ModelCatalog.consumerName(of:)` names any consumer from its id alone, as every provider now names its consumers and as a host names an id its report lacks: the model after the client's `<source>-model:` prefix, then " · " and the route after `#` unless the name already shows it, a route that prefixes the model left out of both, a product's model as the product (`kimi-for-coding` → Kimi For Coding) without a route that is one of its own services, and a Claude Code model as its family and version. `UsageStore.consumerName(_:)` falls back to it for an id no row names.
+  - The vendor catalog files the Codex originators `codex_work_desktop` and `codex_desktop` under Desktop, and `codex_cli_rs` and `codex-cli` under CLI.
+  - `AccountBalance.runsOutAt` is when an API balance runs out at the pace it fell over the day before its reading, which `BalanceTrend.runsOutAt(_:at:)` works out from the balance's `BalanceSample` readings: from the first of the day or from its latest rise, a top-up, with nothing for readings spanning less than `BalanceTrend.minimumSpan` (three hours), a balance that did not fall or one at or below zero. The usage ledger keeps each billing account's balance readings per currency for `BalanceTrend.lookback` (a day), written with `LedgerWriter.appendBalances(_:billing:at:)` and read with `UsageLedger.balanceSamples(billing:currency:since:)`; the DeepSeek provider keeps its balance's readings there, through the ledger `DeepSeekUsageProvider` now takes, and fills in the estimate at every reading.
+  - `ModelCatalog.cost(of:regions:)` gives a usage bucket's list price kind by kind as `ModelCatalog.KindCosts`, in the currency of the list that priced it: the China list in yuan for a client `PriceRegions` finds on the China platform, the international list in US dollars otherwise, at the base rates, and DeepSeek's peak rates for a bucket that starts in its peak hours, as the Tokens page prices its buckets. A kind without tokens is absent, and a model without a list price on that platform has none.
+  - `AgentDescriptor.allModels` says whether a quota window is its provider's plan-wide quota. It is false for a window that limits a subset of the plan's models or features: Claude's weekly window of one family and every Codex window outside the `codex` bucket, as `ClaudeQuotaWindowRow.allModels` and `CodexRateLimits.Row.allModels` set it, Cursor's Cursor Models and Other Models pools, each Antigravity group's windows where the account has several groups, GitHub Copilot's chat messages and code completions, and GLM's MCP window. It is true for every other row, such as Cursor's included usage, Copilot's premium requests or AI credits and every Kimi, GLM and OpenCode Go period. A row saved without it reads as true, only a false one is saved with it, and `SettingsStore.mergeDiscovered` refreshes it with a row's name.
+
+## 0.4.29 — 2026-10-01
+
+- Agent HUD Open is unchanged from 0.4.28. This version carries the release of the Agent HUD app built on it.
+
+## 0.4.28 — 2026-09-30
+
+- Agent HUD Open is unchanged from 0.4.27. This version carries the release of the Agent HUD app built on it.
 
 ## 0.4.27 — 2026-09-30
 

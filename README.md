@@ -57,7 +57,7 @@ This builds and opens `build/Agent HUD Open.app`. The app is signed ad-hoc for l
 
 Install and sign into the clients you want to monitor. Available activity, quota, and balance information depends on the client and account. See [session lifecycle coverage](docs/session-lifecycle.md) for support for running and terminal turns.
 
-Permission requests can be answered from the HUD for the clients whose own hook runs just before they ask: **Claude Code**, **Codex**, **CodeBuddy**, **WorkBuddy**, **ZCode**, **Qwen Code** and the **Qoder** builds. See [approvals](docs/hud.md#approvals).
+Permission requests can be answered from the HUD for the clients whose own hook runs just before they ask: **Claude Code**, **Codex**, **CodeBuddy**, **WorkBuddy**, **ZCode**, **Qwen Code** and the **Qoder** builds. Compatible **DeepSeek Harness** web hosts also offer their questions on the HUD; see [provider support](docs/providers.md#deepseek-harness) and [approvals](docs/hud.md#approvals).
 
 ### Data access
 
@@ -96,6 +96,7 @@ The libraries can also be consumed through Swift Package Manager. `DesktopApplic
 - [Usage semantics](docs/usage-semantics.md) — token dimensions, percentages, alert levels, request intervals, and reading retention.
 - [Providers](docs/providers.md) — per-client data sources, credentials, endpoints, counting, billing pools, caches, tests, and upstream references.
 - [Session lifecycle](docs/session-lifecycle.md) — running and terminal turn evidence, live status, the Pi and OpenCode observers, and completion hooks.
+- [Session navigation](docs/session-navigation.md) — returning from a completion reminder to its originating client.
 - [Command line](docs/command-line.md) — launch options, read-only probes, adapter commands, and environment variables.
 - [Brand assets](docs/brand-assets.md) — bundled client logos, their sources, rendering, and licenses.
 - [Changelog](CHANGELOG.md) — released versions and host-visible API changes.

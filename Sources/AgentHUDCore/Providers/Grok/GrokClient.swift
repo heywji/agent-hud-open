@@ -4,9 +4,21 @@ import Foundation
 struct GrokClient: Sendable {
     var home = GrokSessions.directory(home: FileManager.default.homeDirectoryForCurrentUser, environment: ProcessInfo.processInfo.environment)
     var http = ProviderHTTP()
+    var botDirectory = GrokBotSessions.roots(home: FileManager.default.homeDirectoryForCurrentUser, environment: [:])[0]
 
     func fetch() async throws -> ProviderQuota {
-        guard FileManager.default.fileExists(atPath: home.path) else { return ProviderQuota() }
+        do {
+            let quota = try await fetchCLI()
+            return quota.isSignedIn ? quota : try GrokBotQuota.fetch(in: botDirectory, now: Date()) ?? quota
+        } catch {
+            try Self.propagateCancellation(error)
+            guard let cached = GrokBotQuota.read(in: botDirectory, now: Date()) else { throw error }
+            return cached
+        }
+    }
+
+    private func fetchCLI() async throws -> ProviderQuota {
+        guard FileManager.default.fileExists(atPath: home.path) else { return ProviderQuota(signedOut: true) }
         let url = home.appendingPathComponent("auth.json")
         guard let json = try? ProviderFiles.json(url) else { throw ProviderFailure.login("Grok CLI") }
         let entry = try Self.credential(json, now: Date())
@@ -20,17 +32,27 @@ struct GrokClient: Sendable {
             let reset = DateParsing.internet(period["end"].stringValue)
                 ?? DateParsing.internet(response["config"]["billingPeriodEnd"].stringValue)
             let duration = ProviderDate.period(start: DateParsing.internet(period["start"].stringValue), end: reset)
-            quota.windows.insert(.init(id: "grok", label: Self.periodLabel(period["type"].stringValue ?? fallback.periodType),
+            let (label, short) = Self.periodLabels(period["type"].stringValue ?? fallback.periodType)
+            quota.windows.insert(.init(id: "grok", label: label,
                 remaining: QuotaMath.remaining(usedPercent: fallback.used), reset: reset ?? fallback.end,
-                duration: duration ?? fallback.duration), at: 0)
+                duration: duration ?? fallback.duration, shortLabel: short), at: 0)
             quota.displayNotice = nil
         }
+        quota.client = "Grok CLI"
         quota.account = Self.account(entry)
         quota.label = entry["email"].stringValue
-        if let settings = try? await http.json(URL(string: "https://cli-chat-proxy.grok.com/v1/settings")!, headers: headers, timeout: 2) {
+        do {
+            let settings = try await http.json(URL(string: "https://cli-chat-proxy.grok.com/v1/settings")!, headers: headers, timeout: 2)
             quota.plan = settings["subscription_tier_display"].stringValue ?? quota.plan
+        } catch {
+            try Self.propagateCancellation(error)
         }
         return quota
+    }
+
+    private static func propagateCancellation(_ error: any Error) throws {
+        try Task.checkCancellation()
+        if error is CancellationError || (error as? URLError)?.code == .cancelled { throw error }
     }
 
     static func credential(_ json: ProviderJSON, now: Date) throws -> ProviderJSON {
@@ -65,24 +87,28 @@ struct GrokClient: Sendable {
         let duration = ProviderDate.period(start: start, end: end)
         var quota = ProviderQuota()
         if let used = config["creditUsagePercent"].numberValue, used >= 0 {
-            quota.windows.append(.init(id: "grok", label: periodLabel(period["type"].stringValue), remaining: QuotaMath.remaining(usedPercent: used), reset: end, duration: duration))
+            let (label, short) = periodLabels(period["type"].stringValue)
+            quota.windows.append(.init(id: "grok", label: label, remaining: QuotaMath.remaining(usedPercent: used), reset: end, duration: duration,
+                                       shortLabel: short))
         } else {
             quota.displayNotice = L10n.text("Grok 已连接，但服务未返回已用额度", "Grok is connected, but used credits were not reported")
         }
         // Extra spending is a distinct budget, never a substitute for subscription consumption.
         if let cap = config["onDemandCap"]["val"].numberValue, cap > 0,
            let used = config["onDemandUsed"]["val"].numberValue, used >= 0 {
-            quota.windows.append(.init(id: "grok:extra", label: L10n.text("额外用量预算", "Extra usage budget"),
-                remaining: QuotaMath.remaining(usedPercent: used / cap * 100), reset: end, duration: duration))
+            quota.windows.append(.init(id: "grok:extra", label: L10n.text("额外用量", "Extra usage"),
+                remaining: QuotaMath.remaining(usedPercent: used / cap * 100), reset: end, duration: duration,
+                shortLabel: L10n.text("额外用量", "Extra")))
         }
         return quota
     }
 
-    private static func periodLabel(_ type: String?) -> String {
+    /// xAI's weekly usage limit, which its billing service can also report by the month.
+    private static func periodLabels(_ type: String?) -> (label: String, short: String) {
         switch type {
-        case "USAGE_PERIOD_TYPE_WEEKLY": L10n.text("每周额度", "Weekly credits")
-        case "USAGE_PERIOD_TYPE_MONTHLY": L10n.text("每月额度", "Monthly credits")
-        default: L10n.text("订阅额度", "Subscription credits")
+        case "USAGE_PERIOD_TYPE_WEEKLY": (L10n.text("每周用量额度", "Weekly usage limit"), WindowNames.Period.week.shortName)
+        case "USAGE_PERIOD_TYPE_MONTHLY": (L10n.text("每月用量额度", "Monthly usage limit"), WindowNames.Period.month.shortName)
+        default: (L10n.text("用量额度", "Usage limit"), L10n.text("用量", "Usage"))
         }
     }
 }

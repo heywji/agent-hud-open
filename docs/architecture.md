@@ -20,6 +20,7 @@ Agent HUD Open is a Swift package with three libraries and one executable. `Agen
 ### Host integration
 
 - A host creates a `SettingsStore` and a `UsageStore` around any `UsageProvider`, then a `DesktopApplication`; it owns every additional service and its lifecycle. The shared UI never initializes account services or transports.
+- A host supplies `additionalHUDControls` beside the expanded HUD's Stats button. Its factory receives an action that collapses that display's HUD before opening another window; the host owns the controls' state and calls that action before presenting its window. `additionalMenuItems` adds host entries below Settings.
 - A host hands its process arguments to `HookEntry.handle(arguments:)` first thing at launch: the clients' hook commands and the adapter commands run there and quit without the interface, and anything else starts the application.
 - `UsageAssembly` builds the settings and the store as the standalone application does, over the installed clients with the restart copy on screen, or over the sample data without a ledger, with the host's collection hooks; `UsageProbe.run(settings:)` prints the `--probe` diagnostics.
 - `fetchUsage(agents:historyHours:)` assembles local activity with the latest account results; `refreshAccountUsage(historyHours:)` performs the slower quota, balance and account-wide requests at every call and has a no-op default, and the collector alone spaces those calls; `accountRefreshSteps` splits it into steps the store runs between reads, and `watchedDirectories` names the directories whose changes need a read (nil means the provider is read every poll interval). A provider that wraps another forwards all of them.
@@ -63,7 +64,7 @@ Agent HUD Open is a Swift package with three libraries and one executable. `Agen
 ### Storage
 
 - The standalone bundle identifier is `app.agenthud.open`; preferences live in its UserDefaults domain, with separate domains for demo and snapshot runs.
-- The usage ledger, the restart copy of the report (including account labels), hashed Kimi identities and completion records live in the data directory ([storage](providers.md#storage)); token events keep 31 days and quota readings 30 days. No file contains credentials, and the only conversation text in them is a session's title, which can be the first line of its first prompt, 60 characters at most.
+- The usage ledger, the restart copy of the report (including account labels), hashed Kimi identities and completion records live in the data directory ([storage](providers.md#storage)); token events keep 31 days, quota readings 30 days and API balance readings one day. No file contains credentials, and the only conversation text in them is a session's title, which can be the first line of its first prompt, 60 characters at most.
 - SwiftPM resources are located through `AppResources`; the app bundle carries `AgentHUDOpen_AgentHUDDesktop.bundle` under `Contents/Resources`.
 
 ### Design invariants
@@ -75,7 +76,8 @@ Agent HUD Open is a Swift package with three libraries and one executable. `Agen
 - Isolated sources: a missing, signed-out or failing client never hides another.
 - One copy at a time: every application built on these libraries shares `InstanceLock`, whatever its data directory or bundle identifier. A host calls `SingleInstance.claim()` at launch, after its probes and before it opens preferences, the ledger or a client's settings, and quits when it returns false.
 - No invented lifecycle: inactivity is never a completion, and a passed reset deadline is not a confirmed reset.
-- Observed rows only: rows, groups and first-launch entries come from what providers report or find on the Mac, never from a built-in list of placeholders.
+- Observed rows only: quota windows and accounts come from provider readings, never from a built-in placeholder list; Settings lists every source supplied by the host alongside reported rows and services. Groups for undetected sources follow all other groups, preserving relative order within each section and existing windows' manual order.
+- Settings groups a provider's windows by their existing display account identity, names each account once and uses each window's compact name; dragging a window reorders its account's existing HUD slots without moving another account's windows.
 - Names apart from ids: vendor ids key settings, the ledger, accounts and sync records and never change; `VendorCatalog` holds the names shown, and a value it does not name is shown as written, never filed under another.
 - Resources and notices: the root `THIRD_PARTY_NOTICES.txt` and the bundled copy stay byte-identical, and source comments cite the file.
 - Source boundaries: `make check` rejects signing material, private service directories and imports, secret-shaped strings, external package dependencies, missing ignore rules and a bundled notices file that differs from the root one.
@@ -99,8 +101,8 @@ Agent HUD Open is a Swift package with three libraries and one executable. `Agen
 | `DesktopApplication(options:settings:store:additionalSettingsPages:onIslandEvents:)` | AgentHUDDesktop | Parsed `DesktopLaunchOptions`, the two stores, `[DesktopSettingsPage]` and an optional `(IslandEventTracker.Update, UsageReport, Date) -> Void` relay hook |
 | `start()`, `stop()`, `showSettings(pageID:)`, `showStats()`, `showOnboarding()`, `toggleGlow()` | `DesktopApplication` | Host entry points. `showSettings` selects a page by id (built-in `general`, `sources`, `display`; an unknown id keeps the current page) |
 | `IslandEventTracker.Update` | AgentHUDCore | `completions` (new, Live status on, oldest first), `quotaAlerts` (warnings, exhaustion, resets), `exhaustedWindows` and `criticalWindows` (threshold crossings with the reading that crossed; reaching zero supersedes critical in the same reading), `resetCreditGrants` (accounts whose Codex reset-credit count rose, with the added credits when the provider lists them) |
-| `DesktopSettingsPage` | AgentHUDDesktop | `id`; `title` closure (follows language changes, also the page heading); `subtitle`; `symbol` and `color` for the sidebar icon; `preferredContentWidth` in points (built-in pages use 640); `@ViewBuilder` `content` |
-| Settings window | AgentHUDDesktop | 760 × 720 points, minimum 680 × 560, sidebar 212; the initial width grows to fit the widest host page |
+| `DesktopSettingsPage` | AgentHUDDesktop | `id`; `title` closure (follows language changes, also the page heading); `subtitle`; `symbol` and `color` for the sidebar icon; `preferredContentWidth` in points (General and Display use 640; Agents fills the available width); `@ViewBuilder` `content` |
+| Settings window | AgentHUDDesktop | 960 × 720 points, minimum 880 × 560, sidebar 212; Agents has an ordered provider list and separately scrolling details, and the initial width grows to fit the widest host page |
 | `SingleInstance.claim(at:)` | AgentHUDDesktop | Takes the shared lock and keeps it for the process lifetime; false after an alert naming the copy that holds it. A lock that cannot be created returns true |
 | `InstanceLock.claim(at:executable:)` → `Claim` | AgentHUDCore | `acquired` (the lock lasts as long as the value), `held(by:)` (the application that runs, its bundle when it has one) or `unavailable`; `InstanceLock.sharedURL` is `~/Library/Caches/app.agenthud/instance.lock` |
 | `SessionObservers.configure(executable:)` | AgentHUDCore | Adapter setup with the executable that handles hook callbacks |
@@ -124,7 +126,7 @@ Agent HUD Open is a Swift package with three libraries and one executable. `Agen
 | Per-client providers, and the toolbox they share: JSON, files, HTTP, SQLite, log stores | `Sources/AgentHUDCore/Providers/<Client>/`; `Sources/AgentHUDCore/Providers/Kit/`, `Providers/Kit/Logs/` |
 | Models: usage, sessions, accounts, agents, catalog, settings; calculations: quota, alerts, what the Mac shows | `Sources/AgentHUDCore/Models/<Area>/`; `Sources/AgentHUDCore/Logic/`, `Logic/Quota/`, `Logic/Alerts/` |
 | Durations, token counts, money, dates and languages as written | `Sources/AgentHUDCore/Formatting/` |
-| Vendor names, client and window names, app bundle IDs | `Sources/AgentHUDCore/Models/Catalog/VendorCatalog.swift` |
+| Vendor names, client and window names, app bundle IDs | `Sources/AgentHUDCore/Models/Catalog/VendorCatalog.swift`, `Formatting/WindowNames.swift` |
 | Collection pipeline, signals and hooks; change sets | `Sources/AgentHUDCore/Store/UsageCollector.swift`, `System/FileChangeMonitor.swift`, `Models/Usage/UsageChanges.swift` |
 | Stores and data directory; the statistics window's selections and what they chart | `Sources/AgentHUDCore/Store/UsageStore.swift`, `SettingsStore.swift`, `UsageStore+Stats.swift`, `Ledger/QuotaHistoryStore.swift`, `System/AppSupport.swift`; the usage ledger in `Sources/AgentHUDCore/Ledger/` |
 | Application object, launch options, host pages | `Sources/AgentHUDDesktop/App/DesktopApplication.swift`, `LaunchOptions.swift`, `Settings/DesktopSettingsPage.swift` |

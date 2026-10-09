@@ -7,7 +7,8 @@ import SwiftUI
 final class IslandWindowController {
     let panel: OverlayPanel
     private let hosting: TrackingHostingView
-    private var measurement: NSHostingView<AnyView>?
+
+    var rootView: IslandRootView { hosting.rootView }
 
     var onPointerChange: ((Bool) -> Void)? {
         didSet { hosting.onPointerChange = onPointerChange }
@@ -31,18 +32,35 @@ final class IslandWindowController {
 
     /// Resolve the natural height before expansion so the first frame has its final target.
     func contentHeight(for view: IslandRootView) -> CGFloat {
-        let content = AnyView(view.content.fixedSize(horizontal: false, vertical: true))
-        if let measurement {
-            measurement.rootView = content
-        } else {
-            measurement = NSHostingView(rootView: content)
-        }
-        return measurement!.fittingSize.height
+        var natural = view
+        natural.presentationSize = nil
+        natural.presentationFrame = nil
+        let content = AnyView(natural.content.fixedSize(horizontal: false, vertical: true))
+        // The full panel only exists for this measurement; hovering never keeps a hidden UI alive.
+        let measurement = NSHostingView(rootView: content)
+        return measurement.fittingSize.height
     }
 
     func setFrame(_ frame: CGRect) {
         guard panel.frame != frame else { return }
-        panel.setFrame(frame, display: true)
+        let previous = panel.frame
+        panel.setFrame(frame, display: false)
+        // Native canvas changes are immediate. Rebase the existing surface before its next animated
+        // target, so both the card and the marks keep their screen coordinates during that change.
+        let dx = previous.minX - panel.frame.minX
+        let dy = panel.frame.maxY - previous.maxY
+        var root = hosting.rootView
+        // NSHostingView can render this replacement after the enclosing transaction has ended.
+        // Carry the immediate rebase on the view itself so it cannot start another geometry animation.
+        root.animatesGeometry = false
+        root.presentationFrame = root.presentationFrame?.offsetBy(dx: dx, dy: dy)
+        root.logoQueueFrame = root.logoQueueFrame?.offsetBy(dx: dx, dy: dy)
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            hosting.rootView = root
+            hosting.layoutSubtreeIfNeeded()
+        }
     }
 
     /// Part of the window that counts as "the island" for hover purposes (nil = whole window).

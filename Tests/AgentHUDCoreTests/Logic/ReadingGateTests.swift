@@ -178,7 +178,7 @@ final class ReadingGateTests: XCTestCase {
                                        sessions: [], accounts: accounts)
             let alerts = tracker.update(report: restored, agents: [window, weekly], now: now).alerts
             XCTAssertEqual(alerts.map(\.kind), [.reset], name)
-            XCTAssertEqual(alerts.first?.otherExhaustedWindows, expected, name)
+            XCTAssertEqual(alerts.first?.otherExhaustedWindows.map(\.name), expected, name)
         }
     }
 
@@ -246,7 +246,7 @@ final class ReadingGateTests: XCTestCase {
             sessions: [], discoveredAgents: [window], insightsByAgent: [window.id: insights],
             sourceNotices: reading.sourceNotices, quotaNotices: reading.quotaNotices,
             accounts: ["Codex": [AccountObservation(account: account, label: "a@example.com", observedAt: at, isCurrent: reading.isCurrent,
-                                                    quotaNotice: reading.accountNotice, resetCredits: credits(1))] + reading.otherHomes])
+                                                    quotaNotice: reading.accountNotice, resetCredits: credits(1), quotaWindowIDs: [window.id])] + reading.otherHomes])
         show(report, in: store)
         let row = try XCTUnwrap(store.rows.first)
         var alerts = QuotaAlertTracker(), resets = ResetCreditTracker()

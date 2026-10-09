@@ -176,9 +176,7 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
         var consumers: [String: AgentDescriptor] = [:]
         for item in local.sessions {
             for event in item.events {
-                let route = event.attribution?.providerID ?? "Unknown"
-                consumers[event.agentId] = AgentDescriptor(id: event.agentId, vendor: item.client.name,
-                    model: "\(item.models[event.agentId] ?? "Unknown") · \(route)",
+                consumers[event.agentId] = AgentDescriptor(id: event.agentId, vendor: item.client.name, model: ModelCatalog.consumerName(of: event.agentId),
                     source: L10n.text("本地记录 · 计费归属未确认", "Local records · billing unconfirmed"), enabled: true,
                     billingPool: event.attribution?.pool)
             }
@@ -188,8 +186,7 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
             let last = item.events.max(by: { $0.timestamp < $1.timestamp })
             let agentID = item.currentModel?.id ?? last?.agentId ?? "\(item.client.rawValue)-model:Unknown"
             if consumers[agentID] == nil {
-                consumers[agentID] = AgentDescriptor(id: agentID, vendor: item.client.name,
-                    model: item.currentModel.map { "\($0.name) · \($0.provider)" } ?? "Unknown",
+                consumers[agentID] = AgentDescriptor(id: agentID, vendor: item.client.name, model: ModelCatalog.consumerName(of: agentID),
                     source: L10n.text("本地会话", "Local session"), enabled: true)
             }
             // The newest turn is the last one listed.
@@ -199,7 +196,7 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
                 terminal: item.workspace.map { URL(fileURLWithPath: $0).lastPathComponent }, startedAt: start, endedAt: running ? nil : end,
                 pctOfWindow: nil, tokensIn: unique.reduce(0) { $0 + $1.tokensIn }, tokensOut: unique.reduce(0) { $0 + $1.tokensOut },
                 client: item.client.name, transcriptPath: item.path.isEmpty ? nil : item.path, cacheReadTokens: unique.reduce(0) { $0 + $1.cacheReadTokens }, observedAt: now,
-                workingDirectory: item.workspace, lastActivityAt: end)
+                workingDirectory: item.workspace, lastActivityAt: end, navigationTarget: item.navigation?.target)
         }
         var snapshots: [UsageSnapshot] = [], descriptors: [AgentDescriptor] = []
         var insights: [String: UsageInsights] = [:]
@@ -223,8 +220,9 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
             guard let quota = result.quota else {
                 // A reading that failed without a sign-out keeps the account current, at its last reading, with the reason.
                 if result.isActive {
-                    accounts[pool.provider, default: []].append(AccountObservation(account: ProviderAccount(pool: pool), label: result.credential.accountLabel, plan: result.plan,
-                        observedAt: result.readAt ?? result.at, quotaNotice: result.notice,
+                    accounts[pool.provider, default: []].append(AccountObservation(account: ProviderAccount(pool: pool),
+                        label: result.credential.accountLabel ?? pool.label,
+                        plan: result.plan, observedAt: result.readAt ?? result.at, quotaNotice: result.notice,
                         readingIssue: result.notice.map(ReadingIssue.readFailed)))
                 }
                 continue
@@ -234,16 +232,18 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
             }
             if result.isActive {
                 // A reading whose account the service could not confirm is not verified either.
-                accounts[pool.provider, default: []].append(AccountObservation(account: ProviderAccount(pool: pool), label: result.credential.accountLabel, plan: quota.plan,
-                    observedAt: result.at, quotaNotice: result.notice, readingIssue: result.notice.map(ReadingIssue.unverified)))
+                // The signed-in account's own name where the credential has one, else the pool's label; windows are named by their periods.
+                accounts[pool.provider, default: []].append(AccountObservation(account: ProviderAccount(pool: pool),
+                    label: result.credential.accountLabel ?? pool.label,
+                    plan: quota.plan, observedAt: result.at, quotaNotice: result.notice, readingIssue: result.notice.map(ReadingIssue.unverified)))
             }
             for window in quota.windows {
                 let snapshot = UsageSnapshot(agentId: window.id, remainingPct: window.remaining, resetAt: window.reset,
                                              windowDuration: window.duration, updatedAt: result.at)
                 snapshots.append(snapshot)
-                descriptors.append(.init(id: window.id, vendor: pool.provider, model: window.label + (quota.plan.map { " · " + $0 } ?? ""),
+                descriptors.append(.init(id: window.id, vendor: pool.provider, model: window.label, shortModel: window.shortLabel ?? window.label,
                     source: result.credential.clients.sorted().joined(separator: ", "), enabled: true, billingPool: pool,
-                    account: ProviderAccount(pool: pool)))
+                    account: ProviderAccount(pool: pool), allModels: window.allModels))
                 // Historical records lacking a pool must not inherit the current credential's quota.
                 links[window.id] = Set(events.filter { $0.attribution?.pool == pool }.map(\.agentId))
                 let readings = await history.samples(agentId: window.id, since: QuotaMath.historyStart(for: snapshot, now: now))
@@ -256,7 +256,13 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
             indexing: local.indexing, insightsByAgent: insights, subscriptions: plans, sourceNotices: notices,
             // Every reading belongs to one pool, whose account carries its notice: none is the whole vendor's.
             quotaNotices: [:], readingIssues: [:], consumerIdsByQuota: links,
-            completions: local.sessions.flatMap(\.completions), turns: local.sessions.flatMap(\.turns), services: services,
+            completions: local.sessions.flatMap { item in
+                item.completions.map { event in
+                    var current = event
+                    current.navigationTarget = item.navigation?.target
+                    return current
+                }
+            }, turns: local.sessions.flatMap(\.turns), services: services,
             activeQuotaPoolIDs: cached == nil ? nil : activePools, accounts: cached == nil ? nil : accounts)
     }
 }

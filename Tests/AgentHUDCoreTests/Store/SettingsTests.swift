@@ -11,6 +11,7 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(s.glowOutwardOnly)
         XCTAssertEqual(s.glowBrightness, 0.9)
         XCTAssertEqual(s.hoverDelayMs, 400)
+        XCTAssertFalse(s.openImmediatelyAtTop)
         XCTAssertEqual(s.collapseDelayMs, 200)
         XCTAssertTrue(s.launchAtLogin)
         XCTAssertTrue(s.showMenuBarIcon)
@@ -26,6 +27,7 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(decoded.glowOutwardOnly)
         XCTAssertEqual(decoded.appearance, .system)
         XCTAssertTrue(decoded.showIslandTokens)
+        XCTAssertFalse(decoded.openImmediatelyAtTop)
         XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: Data("{}".utf8)), Settings())
     }
 
@@ -44,6 +46,7 @@ final class SettingsTests: XCTestCase {
             $0.glowOutwardOnly = false
             $0.showIslandQuota = false; $0.showIslandTokens = false
             $0.showIslandSessions = false
+            $0.openImmediatelyAtTop = true
         }
         let data = try JSONEncoder().encode(original)
         XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: data), original)
@@ -97,6 +100,19 @@ final class AgentDescriptorTests: XCTestCase {
         XCTAssertEqual(DemoData.agents.moving(id: "codex", to: 99), DemoData.agents)
     }
 
+    func testAllModelsIsSavedOnlyWhereFalse() throws {
+        let scoped = AgentDescriptor(id: "claude-weekly-fable", vendor: "Claude", model: L10n.windowWeeklyPrefix + "Fable", source: "",
+                                     enabled: true, allModels: false)
+        let every = AgentDescriptor(id: "claude-weekly", vendor: "Claude", model: L10n.windowWeekly, source: "", enabled: true)
+        func keys(_ agent: AgentDescriptor) throws -> Set<String> {
+            Set((try JSONSerialization.jsonObject(with: JSONEncoder().encode(agent)) as! [String: Any]).keys)
+        }
+        XCTAssertTrue(try keys(scoped).contains("allModels"))
+        XCTAssertFalse(try keys(every).contains("allModels"))
+        XCTAssertEqual(try JSONDecoder().decode([AgentDescriptor].self, from: JSONEncoder().encode([scoped, every])), [scoped, every])
+        XCTAssertFalse(scoped.with(enabled: false).allModels)
+    }
+
     func testWithKeepsOtherFields() {
         let a = DemoData.agents[0].with(enabled: false)
         XCTAssertFalse(a.enabled)
@@ -110,7 +126,11 @@ final class AgentDescriptorTests: XCTestCase {
         defer { L10n.setLanguage(.system) }
         let session = AgentDescriptor(id: "claude-session", vendor: "Claude", model: L10n.windowSession, source: "", enabled: true)
         XCTAssertEqual([session.name, session.shortName, session.displayName, session.compactName],
-                       ["Session · 5h", "Session", "Claude · Session · 5h", "Claude · Session"])
+                       ["Current session", "5h", "Claude · Current session", "Claude · 5h"])
+        let spark = AgentDescriptor(id: "codex:spark:primary", vendor: "Codex", model: "GPT-5.3-Codex-Spark · 5h limit", shortModel: "Spark 5h",
+                                    source: "", enabled: true)
+        XCTAssertEqual([spark.name, spark.shortName, spark.compactName], ["GPT-5.3-Codex-Spark · 5h limit", "Spark 5h", "Codex · Spark 5h"],
+                       "a window's short name is its provider's")
         let model = DemoData.agents[0]
         XCTAssertEqual([model.name, model.shortName, model.compactName], ["Opus 4.5", "Opus", "Claude · Opus"])
     }
@@ -174,7 +194,7 @@ final class AgentSettingsTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(UsageReport.self, from: JSONEncoder().encode(retained)).services, report.services)
     }
 
-    func testGroupsIncludeFoundClientsWithoutWindowsAndPreserveWindowOrder() {
+    func testGroupsIncludeUndetectedSourcesWithoutWindowsAndPreserveWindowOrder() {
         let sources = [
             SourceStatus(id: "claude-code", name: "Claude", detail: "", state: .ready(plan: "max_20x")),
             SourceStatus(id: "cursor", name: "Cursor", detail: "", state: .notDetected),
@@ -187,15 +207,72 @@ final class AgentSettingsTests: XCTestCase {
             AgentDescriptor(id: "c2", vendor: "Claude", model: "Weekly", source: "", enabled: false),
         ]
         let groups = AgentSettingsGroup.make(sources: sources, agents: agents)
-        XCTAssertEqual(groups.map(\.id), ["Codex", "Claude", "Grok"], "a client neither installed nor reporting has no group")
+        XCTAssertEqual(groups.map(\.id), ["Codex", "Claude", "Grok", "Cursor"], "undetected sources follow detected groups without changing their relative order")
         XCTAssertEqual(groups[1].agents.map(\.id), ["c1", "c2"])
-        XCTAssertEqual(groups[1].displayedCount, 1)
+        XCTAssertEqual(groups[1].displayedCount(settings: Settings()), 1)
         XCTAssertEqual(groups[1].agents.count, 2)
-        XCTAssertEqual(groups[2].displayedCount, 0)
+        XCTAssertEqual(groups[2].displayedCount(settings: Settings()), 0)
         XCTAssertTrue(groups[2].agents.isEmpty)
+        XCTAssertEqual(groups[3].source?.state, .notDetected)
+        XCTAssertTrue(groups[3].agents.isEmpty)
         let hidden = AgentSettingsGroup.make(sources: sources, agents: agents.map { $0.with(enabled: false) })
-        XCTAssertEqual(hidden.map(\.displayedCount), [0, 0, 0])
+        XCTAssertEqual(hidden.map { $0.displayedCount(settings: Settings()) }, [0, 0, 0, 0])
         XCTAssertEqual(hidden[1].agents.count, 2)
+    }
+
+    func testUndetectedGroupsMoveLastWhileEachSectionAndItsWindowsKeepTheirOrder() {
+        let sources = [
+            SourceStatus(id: "grok", name: "Grok", detail: "", state: .notDetected),
+            SourceStatus(id: "claude-code", name: "Claude", detail: "", state: .ready(plan: "max_20x")),
+            SourceStatus(id: "cursor", name: "Cursor", detail: "", state: .notDetected),
+            SourceStatus(id: "codex-cli", name: "Codex", detail: "", state: .installed),
+        ]
+        let agents = [
+            AgentDescriptor(id: "cursor-weekly", vendor: "Cursor", model: "Weekly", source: "", enabled: false),
+            AgentDescriptor(id: "legacy", vendor: "Legacy", model: "Plan", source: "", enabled: true),
+            AgentDescriptor(id: "claude", vendor: "Claude", model: "5h", source: "", enabled: true),
+            AgentDescriptor(id: "cursor-daily", vendor: "Cursor", model: "Daily", source: "", enabled: true),
+        ]
+        let report = UsageReport(generatedAt: Date(), snapshots: [], sessions: [], services: [
+            .init(client: "Service extra", provider: "OpenAI", product: .api),
+            .init(client: "Cursor", provider: "Anthropic", product: .api),
+        ])
+        let groups = AgentSettingsGroup.make(sources: sources, agents: agents, report: report)
+        XCTAssertEqual(groups.map(\.id), ["Legacy", "Claude", "Codex", "Service extra", "Cursor", "Grok"])
+        XCTAssertNil(groups[0].source, "existing rows without a detected-source entry stay in the first section")
+        XCTAssertNil(groups[3].source, "reported services without a detected-source entry stay in the first section")
+        XCTAssertEqual(groups[3].apiProviders, ["OpenAI"])
+        XCTAssertEqual(groups[4].agents, [agents[0], agents[3]], "partitioning groups preserves each window and its switch")
+        XCTAssertEqual(groups[4].apiProviders, ["Anthropic"], "an undetected group retains reported service details")
+        XCTAssertEqual(groups[4].displayedCount(settings: Settings()), 1)
+        XCTAssertTrue(groups[5].agents.isEmpty)
+    }
+
+    func testEverySupportedSourceRemainsListedWhenNoneIsInstalledWithoutInventingReadings() {
+        // The detector uses these existing catalogs plus the core clients; no second table of supported names.
+        let enumerated = Set(AdditionalSource.allCases.map(\.vendor) + OpenAgentSource.allCases.map(\.name) + ["Grok CLI", "Grok Bot"])
+        let coreClients = SessionSource.agentVendors.filter { !enumerated.contains($0) }
+        let sources = coreClients.map {
+            SourceStatus(id: $0.lowercased(), name: $0, detail: "", state: .notDetected)
+        } + AdditionalSource.allCases.flatMap { source -> [SourceStatus] in
+            guard source == .grok else {
+                return [SourceStatus(id: source.rawValue, name: source.vendor, detail: source.detail, state: .notDetected)]
+            }
+            return [SourceStatus(id: "grok", name: "Grok CLI", detail: "", state: .notDetected, provider: "Grok"),
+                    SourceStatus(id: "grok-bot", name: "Grok Bot", detail: "", state: .notDetected, provider: "Grok", supportsLiveStatus: false)]
+        } + OpenAgentSource.allCases.map {
+            SourceStatus(id: $0.rawValue, name: $0.name, detail: $0.detail, state: .notDetected)
+        }
+        XCTAssertEqual(sources.count, 18)
+        XCTAssertEqual(Set(sources.map(\.name)).count, sources.count)
+        let groups = AgentSettingsGroup.make(sources: sources, agents: [])
+        var seen = Set<String>()
+        let providers = sources.filter { seen.insert($0.provider).inserted }
+        XCTAssertEqual(groups.map(\.id), providers.map(\.provider), "Execution clients share their account provider's settings group")
+        XCTAssertEqual(groups.compactMap(\.source), providers)
+        XCTAssertTrue(groups.allSatisfy { $0.agents.isEmpty && $0.accounts.isEmpty && $0.billingAccounts.isEmpty
+            && $0.unobservedAccounts.isEmpty && $0.plans.isEmpty && $0.apiProviders.isEmpty
+            && $0.displayedCount(settings: Settings()) == 0 }, "An undetected source is not a quota window or an observed account")
     }
 
     func testGroupsListOnlyRowsAProviderStillReports() {
@@ -228,6 +305,7 @@ final class SettingsStoreTests: XCTestCase {
             $0.glowRange = 18
             $0.glowOutwardOnly = false
             $0.showIslandTokens = false
+            $0.openImmediatelyAtTop = true
         }
         store.setAgent(id: "chatgpt", enabled: false)
         store.moveAgent(id: "codex", to: 0)
@@ -237,6 +315,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.settings.glowRange, 18)
         XCTAssertFalse(reloaded.settings.glowOutwardOnly)
         XCTAssertFalse(reloaded.settings.showIslandTokens)
+        XCTAssertTrue(reloaded.settings.openImmediatelyAtTop)
         XCTAssertEqual(reloaded.agents.first?.id, "codex")
         XCTAssertFalse(reloaded.agents.first { $0.id == "chatgpt" }!.enabled)
         XCTAssertTrue(reloaded.hasCompletedOnboarding)
@@ -297,6 +376,25 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.agents.map(\.id), ["codex", "claude-sonnet", "claude-opus", "chatgpt", "antigravity", "deepseek"])
         XCTAssertEqual(reloaded.agents[1], models[1].with(enabled: false))
         XCTAssertEqual(reloaded.enabledAgents.map(\.id), ["codex", "claude-opus", "chatgpt"])
+    }
+
+    func testMergeDiscoveredRefreshesARowsNamesAndWhetherItCoversEveryModel() throws {
+        let defaults = makeDefaults()
+        // Saved before the flag existed, with its switch off.
+        defaults.set(Data(#"[{"id":"claude-weekly-fable","vendor":"Claude","model":"window.weekly.Fable","source":"","enabled":false,"connected":true}]"#.utf8),
+                     forKey: SettingsStore.Keys.agents)
+        let store = SettingsStore(defaults: defaults)
+        XCTAssertEqual(store.agents.map(\.allModels), [true], "a row saved without the flag reads as covering every model")
+        store.mergeDiscovered([AgentDescriptor(id: "claude-weekly-fable", vendor: "Claude", model: "window.weekly.Fable", source: "",
+                                               enabled: true, allModels: false)])
+        XCTAssertEqual(store.agents.map(\.allModels), [false])
+        XCTAssertEqual(store.agents.map(\.enabled), [false], "the switch survives")
+        XCTAssertEqual(SettingsStore(defaults: defaults).agents.map(\.allModels), [false], "the flag is saved")
+        // A window saved under an earlier name takes its provider's names.
+        store.mergeDiscovered([AgentDescriptor(id: "codex", vendor: "Codex", model: "Weekly", source: "", enabled: true)])
+        store.mergeDiscovered([AgentDescriptor(id: "codex", vendor: "Codex", model: "Weekly limit", shortModel: "Weekly", source: "", enabled: true)])
+        let codex = try XCTUnwrap(SettingsStore(defaults: defaults).agents.first { $0.id == "codex" })
+        XCTAssertEqual([codex.name, codex.shortName], ["Weekly limit", "Weekly"])
     }
 
     func testMergeDiscoveredInsertsByVendorAndUpdatesNames() {
