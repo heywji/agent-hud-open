@@ -157,8 +157,8 @@ final class UsageRefreshTests: XCTestCase, @unchecked Sendable {
         let running = SessionTurn(provider: "codex", sessionID: "s", turnID: "t", state: .running,
                                   startedAtMs: ms - 900_000, observedAtMs: ms - 10_000)
         let reset = now.addingTimeInterval(3600)
-        func check(_ report: UsageReport, seesLocalWork: Bool = true) -> Date {
-            report.accountCheck(since: since, now: now, seesLocalWork: seesLocalWork)
+        func check(_ report: UsageReport, seesLocalWork: Bool = true, spread: TimeInterval = 0) -> Date {
+            report.accountCheck(since: since, now: now, seesLocalWork: seesLocalWork, spread: spread)
         }
         XCTAssertEqual(check(report(sessions: [session(endedAgo: nil)], turns: [running], resets: [reset])),
                        since.addingTimeInterval(UsageRefresh.runningAccountInterval), "a running turn spends quota now")
@@ -174,6 +174,12 @@ final class UsageRefreshTests: XCTestCase, @unchecked Sendable {
                        "a window that never says when it resets keeps the interval")
         XCTAssertEqual(check(report(sessions: [session(endedAgo: 300)], resets: [reset]), seesLocalWork: false),
                        since.addingTimeInterval(UsageRefresh.accountInterval), "quiet says nothing about an account used elsewhere")
+        XCTAssertEqual(check(report(sessions: [session(endedAgo: nil)], turns: [running], resets: [reset]), spread: 40),
+                       since.addingTimeInterval(UsageRefresh.runningAccountInterval + 40), "a reading on an interval waits its spread")
+        XCTAssertEqual(check(report(sessions: [session(endedAgo: 300)], resets: [reset]), spread: 40), reset.addingTimeInterval(40),
+                       "a reading at a reset waits it too, so accounts that reset together are not all read in one second")
+        XCTAssertEqual(check(report(sessions: [session(endedAgo: 10)], resets: [reset]), spread: 40), now,
+                       "work that just finished is read without waiting")
     }
 
     func testOnlySessionsInFlightAndRunningTurnsAreReadAgainAsTheyAge() {

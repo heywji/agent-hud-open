@@ -1,6 +1,17 @@
 import XCTest
 @testable import AgentHUDCore
 
+/// Six rows of five vendors for tests about lists of rows and their switches: two Claude models, ChatGPT, Codex, and
+/// Antigravity and DeepSeek switched off.
+private let sixRows: [AgentDescriptor] = [
+    AgentDescriptor(id: "claude-opus", vendor: "Claude", model: "Opus 5.5", source: L10n.sourceClaudeSessions, enabled: true),
+    AgentDescriptor(id: "claude-sonnet", vendor: "Claude", model: "Sonnet 5.5", source: L10n.sourceClaudeSessions, enabled: true),
+    AgentDescriptor(id: "chatgpt", vendor: "ChatGPT", model: "Plus", source: L10n.sourceBrowserAuth, enabled: true),
+    AgentDescriptor(id: "codex", vendor: "Codex", model: "CLI", source: L10n.sourceCodexAppServer, enabled: true),
+    AgentDescriptor(id: "antigravity", vendor: "Antigravity", model: "Agent", source: L10n.sourceNotConnected, enabled: false),
+    AgentDescriptor(id: "deepseek", vendor: "DeepSeek", model: "Harness", source: L10n.sourceNotConnected, enabled: false),
+]
+
 final class SettingsTests: XCTestCase {
     func testDefaultsMatchDesign() {
         let s = Settings()
@@ -46,10 +57,16 @@ final class SettingsTests: XCTestCase {
             $0.glowOutwardOnly = false
             $0.showIslandQuota = false; $0.showIslandTokens = false
             $0.showIslandSessions = false
+            $0.botLogos = false
             $0.openImmediatelyAtTop = true
         }
         let data = try JSONEncoder().encode(original)
         XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: data), original)
+    }
+
+    func testSettingsSavedBeforeBotLogosKeepThemOn() throws {
+        let saved = try JSONDecoder().decode(Settings.self, from: Data("{}".utf8))
+        XCTAssertTrue(saved.botLogos)
     }
 
     func testGlowSizeBoundsWhenDecodingSettings() throws {
@@ -79,25 +96,25 @@ final class SettingsTests: XCTestCase {
 
 final class AgentDescriptorTests: XCTestCase {
     func testGroupsKeepModelOrderAndCombineTheSameDisplayedAgent() {
-        let models = DemoData.agents
+        let models = sixRows
         let interleaved = [models[0], models[3], models[1], models[4], models[2], models[5]]
         XCTAssertEqual(interleaved.agentGroups.map(\.id), ["Claude", "Codex", "Antigravity", "ChatGPT", "DeepSeek"])
         XCTAssertEqual(interleaved.groupedAgentOrder, [models[0], models[1], models[3], models[4], models[2], models[5]])
     }
 
     func testMovingGroupsInBothDirectionsKeepsModelsTogether() {
-        let models = DemoData.agents
+        let models = sixRows
         let moved = models.movingGroup(id: "Claude", to: "Antigravity")
         XCTAssertEqual(moved, [models[2], models[3], models[4], models[0], models[1], models[5]])
         XCTAssertEqual(moved.movingGroup(id: "Claude", to: "ChatGPT"), models)
     }
 
     func testMovingReorders() {
-        let ids = DemoData.agents.moving(id: "codex", to: 0).map(\.id)
+        let ids = sixRows.moving(id: "codex", to: 0).map(\.id)
         XCTAssertEqual(ids.first, "codex")
-        XCTAssertEqual(ids.count, DemoData.agents.count)
-        XCTAssertEqual(DemoData.agents.moving(id: "nope", to: 0), DemoData.agents)
-        XCTAssertEqual(DemoData.agents.moving(id: "codex", to: 99), DemoData.agents)
+        XCTAssertEqual(ids.count, sixRows.count)
+        XCTAssertEqual(sixRows.moving(id: "nope", to: 0), sixRows)
+        XCTAssertEqual(sixRows.moving(id: "codex", to: 99), sixRows)
     }
 
     func testAllModelsIsSavedOnlyWhereFalse() throws {
@@ -114,10 +131,10 @@ final class AgentDescriptorTests: XCTestCase {
     }
 
     func testWithKeepsOtherFields() {
-        let a = DemoData.agents[0].with(enabled: false)
+        let a = sixRows[0].with(enabled: false)
         XCTAssertFalse(a.enabled)
-        XCTAssertEqual(a.source, DemoData.agents[0].source)
-        XCTAssertEqual(a.displayName, "Claude · Opus 4.5")
+        XCTAssertEqual(a.source, sixRows[0].source)
+        XCTAssertEqual(a.displayName, "Claude · Opus 5.5")
     }
 
     /// Every surface names a row through its descriptor: a window key in words, a model as written.
@@ -131,8 +148,8 @@ final class AgentDescriptorTests: XCTestCase {
                                     source: "", enabled: true)
         XCTAssertEqual([spark.name, spark.shortName, spark.compactName], ["GPT-5.3-Codex-Spark · 5h limit", "Spark 5h", "Codex · Spark 5h"],
                        "a window's short name is its provider's")
-        let model = DemoData.agents[0]
-        XCTAssertEqual([model.name, model.shortName, model.compactName], ["Opus 4.5", "Opus", "Claude · Opus"])
+        let model = sixRows[0]
+        XCTAssertEqual([model.name, model.shortName, model.compactName], ["Opus 5.5", "Opus", "Claude · Opus"])
     }
 }
 
@@ -300,7 +317,7 @@ final class SettingsStoreTests: XCTestCase {
 
     func testPersistsSettingsAndAgents() {
         let defaults = makeDefaults()
-        let store = SettingsStore(defaults: defaults, defaultAgents: DemoData.agents)
+        let store = SettingsStore(defaults: defaults, defaultAgents: sixRows)
         store.update {
             $0.glowRange = 18
             $0.glowOutwardOnly = false
@@ -362,7 +379,7 @@ final class SettingsStoreTests: XCTestCase {
 
     func testGroupedOrderPersistsWithModelToggles() throws {
         let defaults = makeDefaults()
-        let models = DemoData.agents
+        let models = sixRows
         let interleaved = [models[0], models[2], models[1], models[3], models[4], models[5]]
         defaults.set(try JSONEncoder().encode(interleaved), forKey: SettingsStore.Keys.agents)
         let store = SettingsStore(defaults: defaults)
@@ -427,10 +444,10 @@ final class UsageStoreTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeStore() -> UsageStore {
+    private func makeStore(rows: [AgentDescriptor] = sixRows) -> UsageStore {
         let suite = "AgentHUDTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        return UsageStore(provider: DemoUsageProvider(), settings: SettingsStore(defaults: defaults, defaultAgents: DemoData.agents))
+        return UsageStore(provider: DemoUsageProvider(), settings: SettingsStore(defaults: defaults, defaultAgents: rows))
     }
 
     func testRowsNoProviderReportsAreHiddenButKeepTheirSwitch() {
@@ -453,19 +470,19 @@ final class UsageStoreTests: XCTestCase {
                                settings: SettingsStore(defaults: UserDefaults(suiteName: "AgentHUDTests.\(UUID().uuidString)")!,
                                                        defaultAgents: DemoData.agents))
         await store.refresh()
-        XCTAssertEqual(store.rows.map(\.id), ["claude-opus", "claude-sonnet", "chatgpt", "codex"])
+        XCTAssertEqual(store.rows.map(\.id), (DemoData.claudeRows + DemoData.codexRows).map(\.id))
     }
 
     func testAgentsWithoutDataStayOutOfGlow() async {
         let suite = "AgentHUDTests.\(UUID().uuidString)"
-        let rows = [AgentDescriptor(id: "codex", vendor: "Codex", model: "CLI", source: L10n.sourceCodexAppServer, enabled: true),
-                    AgentDescriptor(id: "newcomer", vendor: "Newcomer", model: "Plan", source: "", enabled: true)]
+        let codex = DemoData.codexRows[0]
+        let rows = [codex, AgentDescriptor(id: "newcomer", vendor: "Newcomer", model: "Plan", source: "", enabled: true)]
         let store = UsageStore(provider: DemoUsageProvider(), settings: SettingsStore(defaults: UserDefaults(suiteName: suite)!, defaultAgents: rows))
         XCTAssertEqual(store.levels, [])
         XCTAssertTrue(store.isLoading)
         await store.refresh()
         XCTAssertFalse(store.isLoading)
-        XCTAssertEqual(store.rows.map(\.id), ["codex", "newcomer"])
+        XCTAssertEqual(store.rows.map(\.id), [codex.id, "newcomer"])
         XCTAssertEqual(store.levels.count, 1, "only the row demo data has a reading for glows")
     }
 
@@ -487,18 +504,23 @@ final class UsageStoreTests: XCTestCase {
     }
 
     func testRowsFollowAgentOrderAndThresholds() async {
-        let store = makeStore()
+        let store = makeStore(rows: DemoData.agents)
         await store.refresh()
-        XCTAssertEqual(store.rows.map(\.id), ["claude-opus", "claude-sonnet", "chatgpt", "codex"])
-        XCTAssertEqual(store.rows.map(\.level), [.ok, .warning, .ok, .critical])
-        XCTAssertEqual(store.maxUsedPct, 93)
+        XCTAssertEqual(store.rows.map(\.id), (DemoData.claudeRows + DemoData.codexRows).map(\.id))
+        XCTAssertEqual(store.rows.map(\.level), [.ok, .warning, .ok, .ok, .ok, .ok], "Claude's week is 79% used")
+        XCTAssertEqual(store.maxUsedPct, 79)
         XCTAssertTrue(store.hasLiveSession)
+
+        let filling = DemoStage(script: DemoScript(used: ["codex": 93], steps: []), now: Date())
+        store.replace(report: DemoUsageProvider.report(agents: store.settings.agents, historyHours: 24, now: Date(), stage: filling))
+        XCTAssertEqual(store.rows.map(\.level), [.ok, .warning, .ok, .critical, .ok, .ok])
+        XCTAssertEqual(store.maxUsedPct, 93)
     }
 
     func testAPIBillingReplacesQuotaRowAndFollowsAgentToggle() throws {
         let store = makeStore()
         let deepseek = AgentDescriptor(id: "deepseek", vendor: "DeepSeek", model: "Harness", source: L10n.sourceDeepSeekSessions, enabled: true)
-        let claude = DemoData.agents[0]
+        let claude = sixRows[0]
         store.settings.updateAgents { _ in [deepseek, claude] }
         XCTAssertEqual(store.rows.map(\.id), [claude.id], "API agents never create a quota placeholder, even before the first fetch")
         XCTAssertNil(store.rows[0].remainingPct, "subscription agents retain their pending quota row")
@@ -530,7 +552,7 @@ final class UsageStoreTests: XCTestCase {
             UsageBucket(start: hour, agentId: id, tokensIn: tokens, tokensOut: 0)
         }
         store.replace(report: UsageReport(generatedAt: Date(), snapshots: [], sessions: [],
-            consumers: DemoData.agents, usage: usage))
+            consumers: sixRows, usage: usage))
 
         func total() -> Int { store.tokenColumns.reduce(0) { $0 + $1.total } }
         XCTAssertEqual(total(), 1200, "quota settings do not exclude token spenders")
@@ -571,7 +593,7 @@ final class UsageStoreTests: XCTestCase {
     func testQuotaTokenRateUsesOnlyMappedConsumersInTheObservedCurrentCycle() throws {
         let weekly = AgentDescriptor(id: "claude-weekly", vendor: "Claude", model: "Weekly", source: "", enabled: true)
         let store = UsageStore(provider: DemoUsageProvider(), settings: SettingsStore(defaults: UserDefaults(suiteName: "AgentHUDTests.\(UUID().uuidString)")!,
-                                                                                      defaultAgents: DemoData.agents + [weekly]))
+                                                                                      defaultAgents: sixRows + [weekly]))
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let snapshot = UsageSnapshot(agentId: "claude-weekly", remainingPct: 60,
                                      resetAt: now.addingTimeInterval(2 * 3600), windowDuration: 5 * 3600,
@@ -590,10 +612,11 @@ final class UsageStoreTests: XCTestCase {
     }
 
     func testDisablingAgentDropsItFromGlow() async {
-        let store = makeStore()
+        let store = makeStore(rows: DemoData.agents)
         await store.refresh()
-        store.settings.setAgent(id: "codex", enabled: false)
-        XCTAssertEqual(store.levels, [.ok, .warning, .ok])
+        XCTAssertEqual(store.levels, [.ok, .warning, .ok, .ok, .ok, .ok, .warning], "six windows, then DeepSeek's balance")
+        store.settings.setAgent(id: DemoData.claudeRows[1].id, enabled: false)
+        XCTAssertEqual(store.levels, [.ok, .ok, .ok, .ok, .ok, .warning])
     }
 
     func testQuotaSettingsDoNotGateConsumersOrSessions() {

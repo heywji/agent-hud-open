@@ -46,10 +46,12 @@ struct TokenConsumptionChart: View {
     }
 
     var body: some View {
-        let consumers = context == .stats ? store.consumers.filter { modelFilter.includes($0.id) } : store.consumers
-        let ids = context == .stats ? modelFilter.consumerIDs : nil
+        // The island has no filter control of its own; it is only ever handed one agent's models.
+        let consumers = store.consumers.filter { modelFilter.includes($0.id) }
+        let ids = modelFilter.consumerIDs
         let allColumns = context == .stats ? store.tokenColumns : store.hudTokenColumns
-        let columns = ids == nil ? allColumns : store.tokenColumns(consumerIDs: ids)
+        let columns = ids == nil ? allColumns
+            : context == .stats ? store.tokenColumns(consumerIDs: ids) : store.hudTokenColumns(consumerIDs: ids)
         let interval = context == .stats ? store.statsInterval : store.hudTokenInterval
         let models = context == .stats ? Self.modelTotals(consumers: store.consumers, columns: allColumns) : []
         VStack(alignment: .leading, spacing: 6) {
@@ -79,7 +81,7 @@ struct TokenConsumptionChart: View {
             if !compact, context == .stats, !models.isEmpty || !modelFilter.isAll {
                 modelPicker(models)
             } else if !compact, context == .island {
-                let legend = Self.islandLegend(consumers: store.consumers, columns: allColumns)
+                let legend = Self.islandLegend(consumers: store.consumers, columns: allColumns, filter: modelFilter)
                 if !legend.shown.isEmpty {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), alignment: .leading)], alignment: .leading, spacing: 6) {
                         ForEach(legend.shown) { model in
@@ -137,8 +139,10 @@ struct TokenConsumptionChart: View {
     }
 
     /// The HUD limits labels, never the columns or totals. Ties retain the report's model order and palette identity.
-    nonisolated static func islandLegend(consumers: [AgentDescriptor], columns: [TokenColumn]) -> (shown: [ModelTokens], more: Int) {
-        let models = modelTotals(consumers: consumers, columns: columns).filter { $0.tokens > 0 }.sorted {
+    nonisolated static func islandLegend(consumers: [AgentDescriptor], columns: [TokenColumn],
+                                         filter: TokenModelFilter = TokenModelFilter()) -> (shown: [ModelTokens], more: Int) {
+        let models = modelTotals(consumers: consumers, columns: columns)
+            .filter { $0.tokens > 0 && filter.includes($0.consumer.id) }.sorted {
             $0.tokens == $1.tokens ? $0.paletteIndex < $1.paletteIndex : $0.tokens > $1.tokens
         }
         return (Array(models.prefix(10)), max(0, models.count - 10))
@@ -345,7 +349,7 @@ struct TokenBarsChart: View {
 
     private func detail(_ column: TokenColumn) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(period(column)).font(.ui(10)).foregroundStyle(theme.secondary)
+            Text(period(column)).font(.ui(11)).foregroundStyle(theme.secondary)
             Text("\(column.total.formatted()) tokens").font(.tabular(14, .semibold))
             ForEach(Array(consumers.enumerated()), id: \.element.id) { index, consumer in
                 if column.tokens.indices.contains(index), column.tokens[index] > 0 {
@@ -365,7 +369,7 @@ struct TokenBarsChart: View {
             }
             if column.interval.start < interval.start || column.interval.end > interval.end {
                 Text(L10n.text("仅统计所选范围内的部分时段", "Partial period within the selected range"))
-                    .font(.ui(10)).foregroundStyle(theme.secondary)
+                    .font(.ui(11)).foregroundStyle(theme.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -377,7 +381,8 @@ struct TokenBarsChart: View {
     }
 
     private func period(_ column: TokenColumn) -> String {
-        "\(ChartData.dateTime(max(column.interval.start, interval.start))) – \(ChartData.dateTime(min(column.interval.end, interval.end)))"
+        let start = max(column.interval.start, interval.start)
+        return ChartData.period(DateInterval(start: start, end: max(start, min(column.interval.end, interval.end))))
     }
 
     private func description(_ column: TokenColumn) -> String {

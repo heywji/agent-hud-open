@@ -14,8 +14,10 @@ public struct AntigravityPermissions: Sendable {
     }
 
     var http = ProviderHTTP()
-    var discover: @Sendable () async throws -> [AntigravityService.Endpoint] = {
-        try await AntigravityService.permissionEndpoints()
+    /// Where the running services listen. Finding them lists every process, so a poll reuses what the last one found;
+    /// `true` asks for a new search, after a service stopped answering and before an answer is sent.
+    var discover: @Sendable (_ fresh: Bool) async throws -> [AntigravityService.Endpoint] = { fresh in
+        try await AntigravityService.remembered.value(fresh: fresh)
     }
     var clock: @Sendable () -> Date = { Date() }
 
@@ -23,8 +25,20 @@ public struct AntigravityPermissions: Sendable {
 
     /// Summaries carry the waiting steps themselves, so polling reads no conversation transcript.
     public func fetch() async throws -> [Pending] {
-        let endpoints = try await discover()
+        let known = try await discover(false)
         try Task.checkCancellation()
+        do { return try await read(known) }
+        catch Failure.unavailable {
+            // A remembered service that no longer answers has usually quit. Only the same services, found again and
+            // still silent, make the client unavailable.
+            let current = try await discover(true)
+            try Task.checkCancellation()
+            guard current != known else { throw Failure.unavailable }
+            return try await read(current)
+        }
+    }
+
+    private func read(_ endpoints: [AntigravityService.Endpoint]) async throws -> [Pending] {
         guard !endpoints.isEmpty else { return [] }
         var found: [Pending] = [], readPIDs = Set<Int>()
         for endpoint in endpoints {
@@ -53,7 +67,7 @@ public struct AntigravityPermissions: Sendable {
         case .deny: allow = false
         case .allowAlways, .answer: throw Failure.unsupportedDecision
         }
-        let endpoints = try await discover()
+        let endpoints = try await discover(true)
         try Task.checkCancellation()
         guard endpoints.contains(pending.endpoint) else { throw Failure.noLongerWaiting }
         let current = try await pending.endpoint.json("GetAllCascadeTrajectories", http: http)

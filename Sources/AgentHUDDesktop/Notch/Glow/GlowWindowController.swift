@@ -115,7 +115,7 @@ final class GlowWindowController {
         // A logo queue's panel spans the screen, because the island it holds does not stay the width of the
         // marks: an event widens it by a wing on each side, and the open panel is wider still. What keeps
         // the backdrop to the marks' own column is the fade below, which applies only while it is a backdrop.
-        guard geometry.mode != .logos else { return geometry.screenFrame }
+        guard !geometry.mode.isDocked else { return geometry.screenFrame }
         return CGRect(
             x: geometry.centerX - panelWidth / 2,
             y: geometry.screenFrame.minY,

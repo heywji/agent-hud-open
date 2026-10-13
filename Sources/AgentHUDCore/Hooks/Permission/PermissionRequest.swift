@@ -1,11 +1,16 @@
 import AgentHUDSupport
 import Foundation
 
-/// One tool call a client is about to ask its user about.
+/// One request a client is asking its user about, through a tool hook or its native channel.
 ///
-/// The client is waiting on the hook that carried this request, so the request lives only as long as that hook does:
-/// answering it resumes the client, and the client withdrawing it takes it off the HUD. Nothing here is stored.
+/// Answering resumes the client, and the client withdrawing the request takes it off the HUD. Nothing here is stored.
 public struct PermissionRequest: Identifiable, Equatable, Sendable {
+    /// Native requests carry their own scopes or active turn rather than a tool-hook permission rule.
+    public enum NativeApproval: Equatable, Sendable {
+        case computerUseApp(persist: [String])
+        case asynchronousQuestion(turnID: String)
+    }
+
     public let id: String
     public let source: PermissionHooks.Source
     /// Whose request this is, as the HUD names clients elsewhere. It comes from the hook's own source today and
@@ -32,6 +37,7 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
     /// answered, not allowed: the answers travel back inside the call's own input, which is kept for that.
     public let questions: [PermissionQuestion]
     let questionInput: JSONValue?
+    public let nativeApproval: NativeApproval?
     public let at: Date
 
     public var isQuestion: Bool { !questions.isEmpty }
@@ -50,7 +56,8 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
     public init(id: String, source: PermissionHooks.Source, vendor: String? = nil, sessionID: String, toolName: String?,
                 summary: String, detail: String?, cwd: String?, path: String? = nil,
                 removed: String? = nil, added: String? = nil, suggestions: [JSONValue] = [],
-                questions: [PermissionQuestion] = [], questionInput: JSONValue? = nil, at: Date) {
+                questions: [PermissionQuestion] = [], questionInput: JSONValue? = nil,
+                nativeApproval: NativeApproval? = nil, at: Date) {
         self.id = id
         self.source = source
         self.vendor = vendor ?? source.vendor
@@ -65,11 +72,14 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
         self.suggestions = suggestions
         self.questions = questions
         self.questionInput = questionInput
+        self.nativeApproval = nativeApproval
         self.at = at
     }
 
     /// What kind of call this is, in one word, so a list of them can be read down the left edge.
     public var badge: String {
+        if isQuestion { return "ASK" }
+        if case .computerUseApp = nativeApproval { return "APP" }
         guard let toolName, !toolName.isEmpty else { return "TOOL" }
         if toolName.hasPrefix("mcp__") { return "MCP" }
         switch Self.kind(toolName) {
@@ -88,6 +98,8 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
     /// The mark a call is recognized by before its name is read. Only what the client's own tools are; an unknown
     /// tool gets the neutral one rather than a guess.
     public var symbol: String {
+        if isQuestion { return "questionmark.bubble.fill" }
+        if case .computerUseApp = nativeApproval { return "desktopcomputer" }
         guard let toolName, !toolName.isEmpty else { return "questionmark.circle" }
         if toolName.hasPrefix("mcp__") { return "puzzlepiece.extension.fill" }
         switch Self.kind(toolName) {
@@ -112,11 +124,14 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
         return raw.hasPrefix(home) ? "~" + raw.dropFirst(home.count) : raw
     }
 
-    /// The offer worth a button of its own: stop asking about calls like this one. Only a rule is taken — an entry
+    /// The client's offer to stop asking. Native app approvals use the advertised persistent scope. Hooks take only a rule — an entry
     /// that changes the whole permission mode is a different decision than the one being made here, and one that
     /// quietly does nothing unless the session was started to allow it.
     /// A rule that cannot be read back is not offered: what it would allow is not something to agree to unseen.
     public var alwaysAllow: JSONValue? {
+        if case .computerUseApp(let persist) = nativeApproval {
+            return persist.contains("always") ? .object(["persist": .string("always")]) : nil
+        }
         guard source.supportsPermissionUpdates else { return nil }
         return suggestions.first {
             $0["type"].stringValue == "addRules" && $0["behavior"].stringValue == "allow" && Self.rules($0) != nil
@@ -125,6 +140,10 @@ public struct PermissionRequest: Identifiable, Equatable, Sendable {
 
     /// What always allowing adds, written the way the client's settings hold a rule, such as `Bash(npm test:*)`.
     public var alwaysAllowRule: String? { alwaysAllow.flatMap(Self.rules) }
+
+    public var allowLabel: String {
+        nativeApproval == nil ? L10n.text("批准一次", "Allow once") : L10n.text("允许此对话", "Allow this conversation")
+    }
 
     /// The rules a suggestion adds, in the client's own notation and order; nil unless every one names its tool.
     static func rules(_ suggestion: JSONValue) -> String? {
@@ -362,6 +381,7 @@ public enum PermissionDecision: Sendable, Equatable {
     /// in, which is how Claude Code hears what its user chose; a question left out is one the user skipped, and with
     /// none answered Claude Code hears that its questions went unanswered.
     public func response(for request: PermissionRequest) -> Data {
+        guard request.nativeApproval == nil else { return Self.noDecision }
         guard case .answer(let answers) = self else { return response(for: request.source) }
         guard var input = request.questionInput?.objectValue else { return Self.noDecision }
         var written: [String: JSONValue] = [:]

@@ -15,7 +15,9 @@ A completion reminder offers token usage on the left and session return on the r
 | Claude Desktop Cowork | Native desktop session ID | Cowork metadata maps the CLI session ID to its existing local tab |
 | Pi in iTerm2 | Existing terminal session ID | The extension's own process environment |
 | OpenCode in iTerm2 | Existing terminal session ID | The plugin's own process environment |
-| Antigravity standalone | Conversation ID | The client's completion hook |
+| Grok CLI in iTerm2 | Existing terminal session ID | Grok's `active_sessions.json` ties the session to one live interactive process, whose environment names its pane |
+| Grok Bot | Native agent ID | The Bot's cached roster |
+| Antigravity standalone | Conversation ID | The client's completion hook, so only a completion reminder's session return has a destination; a title in the session list has none and opens the session's own page |
 
 ## Rules
 
@@ -44,6 +46,7 @@ A completion reminder offers token usage on the left and session return on the r
 | `claude://claude.ai/epitaxy/<local-session-id>` | Opens the existing Claude Desktop Code tab |
 | `claude://claude.ai/cowork/<local-session-id>` | Opens the existing Claude Desktop Cowork tab |
 | `iterm2:reveal?sessionid=<session-id>` | Reveals an existing iTerm2 session |
+| `grokbot://app/v1/agent?id=<agent-id>` | Opens the existing Grok Bot agent |
 | Antigravity local page | Navigates the running app's page to `/c/<conversation-id>` |
 
 ## Code map
@@ -56,6 +59,7 @@ A completion reminder offers token usage on the left and session return on the r
 | Observer capture | `Sources/AgentHUDCore/Hooks/PiSessionObserver.swift`, `OpenCodeSessionObserver.swift` |
 | Codex terminal identity | `Sources/AgentHUDCore/Hooks/CodexSessionOrigins.swift`, `Sources/AgentHUDCore/Providers/Codex/CodexTerminalOrigins.swift`, `CodexDaemonOriginTransport.swift` |
 | Claude session identity | `Sources/AgentHUDCore/Hooks/ClaudeSessionOrigins.swift`, `Sources/AgentHUDCore/Providers/Claude/ClaudeCodeProvider.swift`, `ClaudeDesktopSessions.swift` |
+| Grok session identity | `Sources/AgentHUDCore/Providers/Grok/GrokSessionOrigins.swift`, `GrokBotSessions.swift` |
 
 ## Related documentation
 

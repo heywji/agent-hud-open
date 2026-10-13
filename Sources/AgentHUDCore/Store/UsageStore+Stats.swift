@@ -90,9 +90,13 @@ public extension UsageStore {
         return DateInterval(start: end.addingTimeInterval(-24 * 3600), end: end)
     }
 
-    var hudTokenColumns: [TokenColumn] {
-        ChartData.tokenBars(usage: report?.usage ?? [], agentIds: consumers.map(\.id), interval: hudTokenInterval,
-                            bucketSize: .minutes15, dimensions: .all)
+    var hudTokenColumns: [TokenColumn] { hudTokenColumns(consumerIDs: nil) }
+
+    /// The HUD's history narrowed to some models, as one agent's own panel shows it.
+    func hudTokenColumns(consumerIDs: Set<String>?) -> [TokenColumn] {
+        let selected = consumers.filter { consumerIDs?.contains($0.id) ?? true }
+        return ChartData.tokenBars(usage: report?.usage ?? [], agentIds: selected.map(\.id), interval: hudTokenInterval,
+                                   bucketSize: .minutes15, dimensions: .all)
     }
 
     var statsActivity: ActivityGrid {

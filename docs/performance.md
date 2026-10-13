@@ -42,6 +42,9 @@ had finished history indexing and reported eight quota windows before the final 
 | Original 0.4.22 | 1.549% | 1.780% |
 | Local optimized 0.4.26 | 0.074% | 0.083% |
 
+Until 2026-10-11 the reader took the kernel's CPU ticks for nanoseconds. A tick is 125/3 ns on Apple silicon, so a
+figure taken there before that date is 41.7 times too small: 1.549% reads 64.5% and 0.074% reads 3.1%.
+
 These are separate short observation windows, not a controlled benchmark of only this patch.
 Upstream improvements since 0.4.22 also contribute. The values cover the main process; they exclude
 separate client-engine and hook processes, and do not rule out short indexing or refresh peaks.
@@ -54,3 +57,31 @@ English-copy assertions fail on a Chinese system. The override was restored afte
 
 The separate local app is installed in `~/Applications/Agent HUD Open.app`. The original installation
 and preferences are retained. Startup registration has not been switched to the local copy.
+
+## Where background CPU goes
+
+Cost follows the agents: while one writes its log a collection pass runs every two seconds, and whatever a pass
+repeats in full is paid thirty times a minute. `sample PID 20` on a running release build, with its busy samples
+grouped by the application's own functions, shows which part is paying; a mean alone does not.
+
+- A dock of logos runs no timer. A bot asks for a frame only as often as its motion shows: 30 a second for a morph,
+  an act or a blink, 15 while its eyes follow the pointer, 10 for a breath, and none until its next visit while it
+  waits as its logo. Its frames are drawn in the display's colours and byte order; a layer given any other picture
+  converts it on every commit, which cost as much as drawing it.
+- The Antigravity and DeepSeek observers poll their client's local service every two seconds, and look for that
+  service in the process list at most every ten. A listing is half a megabyte on a busy Mac and is searched, not
+  split into lines.
+
+## 2026-10-11 local validation
+
+Dynamic mode, collapsed, on an Apple silicon Mac while a Claude Code session wrote its log; 20-second samples of the
+release build before and an optimised build after, in milliseconds of CPU per 15 seconds sampled.
+
+| Part | Before | After |
+| --- | ---: | ---: |
+| Bots: timer, drawing and layer commits | 490 | 227 |
+| Antigravity approval observer | 274 | 25 |
+| DeepSeek question observer | 285 | 3 |
+
+The samples are a minute apart at best and the agents' activity differs between them; they locate cost and do not
+benchmark it.

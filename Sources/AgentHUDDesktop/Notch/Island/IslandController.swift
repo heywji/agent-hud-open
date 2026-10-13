@@ -10,6 +10,8 @@ import SwiftUI
 @MainActor
 final class IslandController {
     static let expandedWidth: CGFloat = 540
+    /// One agent's own panel, on a dock that separates its agents.
+    static let agentPanelWidth: CGFloat = 440
     static let defaultPanelHeight: CGFloat = 326
     static let expandedRadius: CGFloat = 26
     static let alertWingWidth: CGFloat = 112
@@ -145,6 +147,17 @@ final class IslandController {
         let key = NSScreen.screens.first { $0.frame.contains(point) }.map { ScreenIdentity.key(for: $0) }
         return key.flatMap { huds[$0] } ?? primary
     }
+
+    /// The main display's HUD as windows, back to front, for a recording of it and nothing else. The glow's window
+    /// spans the display; what it draws stays within reach of the island, the shadow under an open panel included.
+    var recordingSources: [HUDRecorder.Source] {
+        guard let hud = primary else { return [] }
+        let island = hud.island.panel.frame
+        return [.init(window: hud.glow.panel, bounds: island.insetBy(dx: -Self.glowReach, dy: -Self.glowReach)),
+                .init(window: hud.island.panel, bounds: nil)]
+    }
+    /// Farther than any glow setting or the panel's shadow extends past the island.
+    private static let glowReach: CGFloat = 120
 
     var island: IslandWindowController { primary!.island }
     var glow: GlowWindowController { primary!.glow }

@@ -21,9 +21,12 @@ struct DisplayPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
-            ScreensPane(settings: settings, theme: theme, selected: $screen)
-            GlowPane(settings: settings, store: store, theme: theme, placement: placement,
-                     metrics: ScreenMetrics(screen: selection), screen: screen)
+            ScreensPane(settings: settings, store: store, theme: theme, selected: $screen)
+            // Simple mode draws no glow, so its screen has no glow settings to show.
+            if placement.mode != .simple {
+                GlowPane(settings: settings, store: store, theme: theme, placement: placement,
+                         metrics: ScreenMetrics(screen: selection), screen: screen)
+            }
             IslandPane(settings: settings, theme: theme)
             SettingsSection(title: L10n.text("菜单栏", "Menu bar"), theme: theme) {
                 SettingsToggleRow(

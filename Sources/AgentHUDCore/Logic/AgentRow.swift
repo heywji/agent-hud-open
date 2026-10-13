@@ -25,7 +25,7 @@ public struct AgentRow: Hashable, Sendable, Identifiable {
     public var leftPct: Double? { remainingPct.map { max(0, min(100, $0)) } }
 
     public var missingQuotaLabel: String {
-        "—"
+        assessment.observedAt == nil ? "—" : "N/A"
     }
 
     public func resetLabel(now: Date, compact: Bool = false) -> String {

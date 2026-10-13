@@ -10,6 +10,7 @@ actor AdditionalUsageProvider: UsageProvider, LedgerRecording {
     private let readCompletions: @Sendable (Date) throws -> [SessionCompletion]
     private let history: QuotaHistoryStore
     private let clock: @Sendable () -> Date
+    private let botQuotaDirectory: URL?
     private var lastQuota: (at: Date, result: Result<ProviderQuota, UsageProviderError>)?
     /// The account the last reading that succeeded resolved, which a failed reading keeps: usage kept per account must
     /// not move to another key and back whenever a quota request fails.
@@ -25,6 +26,7 @@ actor AdditionalUsageProvider: UsageProvider, LedgerRecording {
          history: QuotaHistoryStore,
          readCompletions: @escaping @Sendable (Date) throws -> [SessionCompletion] = { _ in [] },
          clock: @escaping @Sendable () -> Date = { Date() },
+         botQuotaDirectory: URL? = nil,
          refreshSessions: @escaping @Sendable (Int) async -> Void = { _ in },
          watchedDirectories: [URL]? = nil, fileChanges: @escaping @Sendable (Set<String>?) async -> Void = { _ in },
          ledger: UsageLedger = .inMemory()) {
@@ -33,22 +35,25 @@ actor AdditionalUsageProvider: UsageProvider, LedgerRecording {
         self.readCompletions = readCompletions
         self.refreshSessions = refreshSessions
         self.history = history; self.clock = clock
+        self.botQuotaDirectory = botQuotaDirectory
         self.watchedDirectories = watchedDirectories
         self.ledger = ledger
         sessionLedger = SessionLedger(source: source.rawValue, ledger: ledger)
     }
 
     /// `settings` holds the consent GitHub Copilot's quota reading waits for.
+    /// `grokBotRoutineRuns` is asked to learn the runs behind newly billed sub-agent conversations, in Cursor's account step.
     static func standard(_ source: AdditionalSource, settings: SettingsStore, ledger: UsageLedger,
-                         persistHistory: Bool = true) -> AdditionalUsageProvider {
+                         persistHistory: Bool = true, grokBotRoutineRuns: GrokBotRoutineRuns? = nil) -> AdditionalUsageProvider {
         let local = AdditionalLocalStore(source: source)
         let cursor = CursorClient()
+        let grok = GrokClient()
         let consented = CopilotClient.consent(in: settings)
         return AdditionalUsageProvider(source: source, readQuota: {
             switch source {
             case .antigravity: return try await AntigravityClient().fetch()
             case .cursor: return try await cursor.quota()
-            case .grok: return try await GrokClient().fetch()
+            case .grok: return try await grok.fetch()
             case .copilot: return try await CopilotClient(enabled: consented).fetch()
             case .openclaw, .hermes, .zcode, .codebuddy, .workbuddy, .qwen: return ProviderQuota()
             }
@@ -60,16 +65,23 @@ actor AdditionalUsageProvider: UsageProvider, LedgerRecording {
         readCompletions: { since in
             guard let hook = CompletionHooks.Source(rawValue: source.rawValue) else { return [] }
             return try CompletionHooks.read(source: hook, since: since)
-        }, refreshSessions: { hours in
+        }, botQuotaDirectory: source == .grok ? grok.botDirectory : nil, refreshSessions: { hours in
             if source == .cursor {
-                _ = await cursor.sessions(since: Date().addingTimeInterval(-Double(max(168, hours)) * 3600))
+                let read = await cursor.sessions(since: Date().addingTimeInterval(-Double(max(168, hours)) * 3600))
+                await grokBotRoutineRuns?.refresh(billed: read.sessions.map(\.id)) { try await cursor.grokBotAutomations(agentIDs: $0) }
             }
         }, watchedDirectories: local.roots + (CompletionHooks.Source(rawValue: source.rawValue).map {
             [CompletionHooks.directory.appendingPathComponent($0.rawValue)]
         } ?? []), fileChanges: { await local.fileChanges($0) }, ledger: ledger)
     }
 
-    func fileChanges(_ paths: Set<String>?) async { await noteChanges(paths) }
+    func fileChanges(_ paths: Set<String>?) async {
+        await noteChanges(paths)
+        if source == .grok, let paths, let botQuotaDirectory,
+           GrokBotQuota.isQuotaChange(paths, in: botQuotaDirectory) {
+            await refreshAccountUsage(historyHours: 24)
+        }
+    }
 
     /// This source's 15-minute token totals from the period holding `since`.
     func usage(since: Date) async -> [UsageBucket] {
@@ -97,7 +109,9 @@ actor AdditionalUsageProvider: UsageProvider, LedgerRecording {
             let observedAt = result.observedAt ?? now
             lastQuota = (observedAt, .success(result))
             if result.forgetAccounts { await history.removeAll() }
-            await history.append(result.scopedWindows(source).map { .init(agentId: $0.id, timestamp: observedAt, remainingPct: $0.remaining) }, now: now)
+            await history.append(result.scopedWindows(source).compactMap { window in
+                window.remaining.map { .init(agentId: window.id, timestamp: window.observedAt ?? observedAt, remainingPct: $0) }
+            }, now: now)
         } catch {
             if Task.isCancelled { return }
             lastQuota = (now, .failure(UsageProviderError(error.localizedDescription)))
@@ -162,7 +176,8 @@ actor AdditionalUsageProvider: UsageProvider, LedgerRecording {
                                workingDirectory: item.workspace, lastActivityAt: end, navigationTarget: item.navigationTarget)
         }
         let snapshots = windows.map {
-            UsageSnapshot(agentId: $0.id, remainingPct: $0.remaining, resetAt: $0.reset, windowDuration: $0.duration, updatedAt: observedAt)
+            UsageSnapshot(agentId: $0.id, remainingPct: $0.remaining, resetAt: $0.reset, windowDuration: $0.duration,
+                          updatedAt: $0.observedAt ?? observedAt)
         }
         var insights: [String: UsageInsights] = [:]
         for snapshot in snapshots {
@@ -181,8 +196,9 @@ actor AdditionalUsageProvider: UsageProvider, LedgerRecording {
         let accounts: [String: [AccountObservation]]?
         if quota.isSignedIn {
             accounts = [source.vendor: [AccountObservation(account: account, client: quota.client, label: quota.label,
-                plan: quota.plan, observedAt: observedAt,
-                quotaWindowIDs: quota.quotaWindowIDs.map { Set($0.map(account.windowID)) })]]
+                plan: quota.plan, observedAt: observedAt, aliases: quota.accountAliases,
+                quotaWindowIDs: quota.quotaWindowIDs.map { Set($0.map(account.windowID)) },
+                wallets: quota.wallets.map { $0.observed(at: $0.observedAt ?? observedAt) }, sourceInfo: quota.sourceInfo)]]
         } else if quota.signedOut, quotaNotice == nil {
             // A successful signed-out/absent client read confirms that previously retained accounts are no longer current.
             accounts = [source.vendor: []]

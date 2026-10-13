@@ -207,9 +207,10 @@ extension View {
         modifier(CardModifier(theme: theme, padding: padding, radius: radius))
     }
 
-    /// 1 px line along the top edge (CSS `border-top`).
+    /// 1 px line along the top edge (CSS `border-top`). It sits under the content, so anything the section floats
+    /// above its own top, such as a chart's hover box, covers the line instead of being crossed by it.
     func topDivider(_ color: Color) -> some View {
-        overlay(alignment: .top) { Rectangle().fill(color).frame(height: 1) }
+        background(alignment: .top) { Rectangle().fill(color).frame(height: 1) }
     }
 }
 

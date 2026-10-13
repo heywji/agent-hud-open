@@ -81,7 +81,7 @@ final class AccountMenuTests: XCTestCase {
     }
 
     @MainActor
-    func testMenuGroupsAccountsAndDistinguishesPendingFromHistoricalReadings() throws {
+    func testMenuHidesFormerAccountsAndShowsTheCurrentPendingReading() throws {
         _ = NSApplication.shared
         let suite = "AccountMenuTests.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite); L10n.setLanguage(.system) }
@@ -103,11 +103,10 @@ final class AccountMenuTests: XCTestCase {
         let controller = StatusItemController(store: store, settings: settings)
         let menu = NSMenu()
         controller.menuNeedsUpdate(menu)
-        XCTAssertEqual(Array(menu.items.prefix(5)).map(\.title), ["Codex", "current@example.com", "Weekly", "old@example.com", "Weekly"])
-        XCTAssertTrue(menu.items[1].view?.accessibilityLabel()?.contains("Current account") == true)
-        XCTAssertTrue(menu.items[2].view?.accessibilityLabel()?.contains("Pending update") == true)
-        XCTAssertTrue(menu.items[3].view?.accessibilityLabel()?.contains("Last read 1h ago") == true)
-        XCTAssertTrue(menu.items[4].view?.accessibilityLabel()?.hasSuffix("0% left · —") == true)
+        XCTAssertEqual(Array(menu.items.prefix(2)).map(\.title), ["current@example.com", "Weekly"])
+        XCTAssertFalse(menu.items.contains { $0.title == "old@example.com" })
+        XCTAssertTrue(menu.items[0].view?.accessibilityLabel()?.contains("Current account") == true)
+        XCTAssertTrue(menu.items[1].view?.accessibilityLabel()?.contains("Pending update") == true)
         XCTAssertNil(store.rows[0].level, "a past deadline cannot show a confirmed exhaustion status")
         let future = UsageReport(generatedAt: now, snapshots: [.init(agentId: agents[0].id, remainingPct: 50,
             resetAt: now.addingTimeInterval(20), updatedAt: now)], sessions: [], discoveredAgents: [agents[0]])
@@ -159,7 +158,7 @@ final class AccountMenuTests: XCTestCase {
         let (menu, store) = buildMenu(showing: report, agents: agents, now: now, defaults: defaults)
 
         XCTAssertNil(store.maxUsedPct, "no window counts: the account's or the vendor's failed read, a passed reset or a signed-out account holds each back")
-        XCTAssertEqual(menu.items.prefix(9).map { [$0.view?.accessibilityLabel() ?? "", $0.toolTip ?? "—"] }, [
+        XCTAssertEqual(menu.items.prefix(7).map { [$0.view?.accessibilityLabel() ?? "", $0.toolTip ?? "—"] }, [
             ["Codex", "—"],
             ["failed@example.com, Last read 5m ago", "Quota read failed · Codex login failed"],
             ["Weekly, 10% left · <1m", "—"],
@@ -167,11 +166,9 @@ final class AccountMenuTests: XCTestCase {
             ["stale@example.com, Last read 2h ago", "Codex login failed"],
             ["Weekly, 40% left · Pending update", "—"],
             ["5h, 20% left · 2h05m", "—"],
-            ["old@example.com, Last read 3h ago", "Codex login failed"],
-            ["Weekly, 2% left · —", "—"],
         ])
         XCTAssertEqual(store.accountSections(store.rows).map { store.accountNotice(for: $0) },
-                       ["Quota read failed · Codex login failed", "Codex login failed", "Codex login failed"],
+                       ["Quota read failed · Codex login failed", "Codex login failed"],
                        "the island shows above each account what its menu header's tooltip says")
     }
 

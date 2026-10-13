@@ -90,6 +90,9 @@ public struct Settings: Hashable, Codable, Sendable {
     public var showIslandQuota: Bool = true
     public var showIslandTokens: Bool = true
     public var showIslandSessions: Bool = true
+    /// A mark turns into its bot while its agent works, asks for approval or has just replied. Off, marks stay
+    /// logos and a working one keeps still.
+    public var botLogos: Bool = true
     /// Accounts hidden from quota, balance and glow presentation. Their recorded usage stays intact.
     public private(set) var hiddenAccountIDs: Set<String> = []
     /// Saved live-status choices, including the initial choice based on whether a client was detected.
@@ -127,7 +130,7 @@ public struct Settings: Hashable, Codable, Sendable {
         case breathSeconds, idleBreathSeconds, breathAmplitude, glowRange, glowBlur, glowBrightness, glowOutwardOnly
         case glowStyle, glowGridPitch, glowGridSpread, glowGridCore, glowGridFade, glowGridDensity, glowEffect
         case requiresOptionToOpen, openImmediatelyAtTop, hoverDelayMs, collapseDelayMs, showResetCountdown
-        case showIslandQuota, showIslandTokens, showIslandSessions, hiddenAccountIDs
+        case showIslandQuota, showIslandTokens, showIslandSessions, botLogos, hiddenAccountIDs
         case liveStatusPreferences, disabledLiveStatusSources, readCopilotQuota, clientHooks, approvalWaitMinutes
         case launchAtLogin, showMenuBarIcon, appearance, language, screens, screenGlow
     }
@@ -161,6 +164,7 @@ public struct Settings: Hashable, Codable, Sendable {
         showIslandQuota = try c.decodeIfPresent(Bool.self, forKey: .showIslandQuota) ?? d.showIslandQuota
         showIslandTokens = try c.decodeIfPresent(Bool.self, forKey: .showIslandTokens) ?? d.showIslandTokens
         showIslandSessions = try c.decodeIfPresent(Bool.self, forKey: .showIslandSessions) ?? d.showIslandSessions
+        botLogos = try c.decodeIfPresent(Bool.self, forKey: .botLogos) ?? d.botLogos
         hiddenAccountIDs = Set(try c.decodeIfPresent([String].self, forKey: .hiddenAccountIDs) ?? [])
         if let saved = try c.decodeIfPresent([String: Bool].self, forKey: .liveStatusPreferences) {
             liveStatusPreferences = saved.reduce(into: [:]) { $0[$1.key.lowercased()] = $1.value }
@@ -209,6 +213,7 @@ public struct Settings: Hashable, Codable, Sendable {
         try c.encode(showIslandQuota, forKey: .showIslandQuota)
         try c.encode(showIslandTokens, forKey: .showIslandTokens)
         try c.encode(showIslandSessions, forKey: .showIslandSessions)
+        try c.encode(botLogos, forKey: .botLogos)
         try c.encode(hiddenAccountIDs.sorted(), forKey: .hiddenAccountIDs)
         try c.encode(liveStatusPreferences, forKey: .liveStatusPreferences)
         try c.encode(readCopilotQuota, forKey: .readCopilotQuota)

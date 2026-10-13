@@ -84,7 +84,7 @@ public struct ReportView: Sendable {
             return AgentRow(
                 agent: agent,
                 remainingPct: snapshot?.remainingPct,
-                level: assessment.showsLevel ? snapshot.map { AlertPolicy.quotaLevel(remaining: $0.remainingPct) } : nil,
+                level: assessment.showsLevel ? snapshot.flatMap(\.remainingPct).map { AlertPolicy.quotaLevel(remaining: $0) } : nil,
                 resetAt: snapshot?.resetAt,
                 weeklyRemainingPct: snapshot?.weeklyRemainingPct,
                 paletteIndex: index,
@@ -125,7 +125,8 @@ public struct ReportView: Sendable {
         rowGroups = order.map { ($0, groups[$0] ?? []) }
         self.billing = billing
         glowSegments = segments
-        sessions = (report?.sessions ?? []).map { Self.read($0, index: index, settings: settings, now: now) }.sorted {
+        sessions = (report?.sessions ?? []).filter { !$0.isBillingOnlyGrokBotSubagent }
+            .map { Self.read($0, index: index, settings: settings, now: now) }.sorted {
             if $0.lastEventAt != $1.lastEventAt { return $0.lastEventAt > $1.lastEventAt }
             let lhs = $0.source.vendor ?? "", rhs = $1.source.vendor ?? ""
             return lhs == rhs ? $0.id < $1.id : lhs < rhs
@@ -135,7 +136,7 @@ public struct ReportView: Sendable {
     // MARK: Quota
 
     /// Whether a row is present, the one rule of the panel, the menu, Settings and the report kept across passes: a provider
-    /// reported it within the retention period, its account is in its provider's inventory, and its plan pool is active.
+    /// reported it within the retention period, its account is current in its provider's inventory, and its plan pool is active.
     /// What a report does not say counts as present: rows it keeps no sighting times for, a provider without an inventory, a
     /// pool its provider's inventory does not cover; without a report every row is. A row without an account is no longer
     /// present once its provider identifies accounts.
@@ -154,7 +155,7 @@ public struct ReportView: Sendable {
         }
         guard let inventory = accounts?[agent.account?.provider ?? agent.vendor] else { return true }
         guard let account = agent.account else { return inventory.isEmpty }
-        return inventory.contains { $0.account.id == account.id }
+        return inventory.contains { $0.account.id == account.id && $0.isCurrent }
     }
 
     /// Each glow segment's level, in glow order.

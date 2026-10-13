@@ -52,7 +52,7 @@ final class NotchGeometryTests: XCTestCase {
         XCTAssertEqual(result.mode, .logos)
         XCTAssertEqual(result.edge, .left)
         let rect = NotchGeometry.stripRect(queue: CGSize(width: 20, height: 216), frame: screen,
-                                          menuBar: 32, placement: result)
+                                          placement: result)
         XCTAssertEqual(rect.midY, point.y, accuracy: 0.000001)
         XCTAssertEqual(result.logoSize, original.logoSize)
         XCTAssertEqual(result.gapScale, original.gapScale)
@@ -74,7 +74,7 @@ final class NotchGeometryTests: XCTestCase {
                                         y: down.y - (edge.isHorizontal ? 0 : delta))
                     let placement = NotchGeometry.dragPlacement(at: moved, screenFrame: screen, queue: queueSize(for: edge),
                                                                  placement: initial, grabFraction: fraction)
-                    let rect = NotchGeometry.stripRect(queue: queueSize(for: edge), frame: screen, menuBar: 32,
+                    let rect = NotchGeometry.stripRect(queue: queueSize(for: edge), frame: screen,
                                                        placement: placement)
                     XCTAssertEqual(placement.edge, edge)
                     XCTAssertEqual(edge.isHorizontal ? rect.minX - original.minX : original.maxY - rect.maxY,
@@ -95,7 +95,7 @@ final class NotchGeometryTests: XCTestCase {
                     let pointer = point(in: targetRect, edge: target, fraction: fraction)
                     let placement = NotchGeometry.dragPlacement(at: pointer, screenFrame: screen, queue: queueSize(for: source),
                                                                  placement: ScreenPlacement(edge: source), grabFraction: fraction)
-                    let rect = NotchGeometry.stripRect(queue: queueSize(for: target), frame: screen, menuBar: 32,
+                    let rect = NotchGeometry.stripRect(queue: queueSize(for: target), frame: screen,
                                                        placement: placement)
                     XCTAssertEqual(placement.edge, target)
                     XCTAssertEqual(placement.offset, 0.45, accuracy: 0.000001)
@@ -141,7 +141,7 @@ final class NotchGeometryTests: XCTestCase {
 
     private func makeGeometry(edge: HUDEdge, offset: Double) -> NotchGeometry {
         let placement = ScreenPlacement(edge: edge, offset: offset)
-        let rect = NotchGeometry.stripRect(queue: queueSize(for: edge), frame: screen, menuBar: 32, placement: placement)
+        let rect = NotchGeometry.stripRect(queue: queueSize(for: edge), frame: screen, placement: placement)
         return NotchGeometry(screenFrame: screen, mode: .logos, edge: edge, hasNotch: false,
                              rect: rect, cornerRadius: 10, backingScale: 2, menuBarHeight: 32)
     }

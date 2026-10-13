@@ -46,14 +46,24 @@ struct SourcesPane: View {
             .frame(width: 152)
             .padding(.bottom, 20)
             if let selected {
-                ScrollView {
-                    AgentProviderDetail(group: selected, settings: settings, report: store.report, theme: theme,
-                                        accountLabel: { store.accountLabel(for: $0) }, dragging: $dragging)
-                        .padding(.trailing, 8)
-                        .padding(.bottom, 32)
+                VStack(alignment: .trailing, spacing: 12) {
+                    Button {
+                        Task { await store.refreshAccounts() }
+                    } label: {
+                        Label(L10n.text("刷新账户", "Refresh accounts"), systemImage: "arrow.clockwise")
+                    }
+                    .disabled(!store.isAccessAllowed || store.isRefreshing)
+                    .help(L10n.text("重新读取当前登录账户和额度", "Read the current signed-in accounts and quota again"))
+                    .accessibilityIdentifier("refresh-agent-accounts")
+                    ScrollView {
+                        AgentProviderDetail(group: selected, settings: settings, report: store.report, theme: theme,
+                                            accountLabel: { store.accountLabel(for: $0) }, dragging: $dragging)
+                            .padding(.trailing, 8)
+                            .padding(.bottom, 32)
+                    }
+                    .id(selected.id)
+                    .accessibilityIdentifier("provider-detail-\(selected.id)")
                 }
-                .id(selected.id)
-                .accessibilityIdentifier("provider-detail-\(selected.id)")
             } else {
                 Text(L10n.text("尚未检测到智能体", "No agents detected yet"))
                     .foregroundStyle(theme.secondary)
@@ -67,6 +77,7 @@ struct SourcesPane: View {
         .onChange(of: detected, initial: true) { _, sources in
             settings.update { $0.applyLiveStatusDefaults(sources: sources) }
         }
+        .task { await store.refreshAccounts() }
     }
 }
 

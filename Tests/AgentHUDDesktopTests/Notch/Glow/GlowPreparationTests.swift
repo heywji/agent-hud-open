@@ -223,7 +223,7 @@ final class GlowPreparationTests: XCTestCase {
     private func geometry(edge: HUDEdge = .top, mode: HUDMode? = nil) -> NotchGeometry {
         let screen = CGRect(x: -20000, y: -20000, width: 1000, height: 800)
         let queue = edge.isHorizontal ? CGSize(width: 200, height: 24) : CGSize(width: 24, height: 200)
-        let rect = NotchGeometry.stripRect(queue: queue, frame: screen, menuBar: 24,
+        let rect = NotchGeometry.stripRect(queue: queue, frame: screen,
                                           placement: ScreenPlacement(edge: edge))
         return NotchGeometry(screenFrame: screen, mode: mode ?? (edge == .top ? .notch : .logos), edge: edge, hasNotch: false,
             rect: rect,

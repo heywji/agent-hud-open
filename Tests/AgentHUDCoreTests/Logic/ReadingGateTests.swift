@@ -107,9 +107,6 @@ final class ReadingGateTests: XCTestCase {
             // Without a reset, only a full window is an alert baseline.
             ("no reset and a half-used window", Reading(remaining: 50, resetIn: nil),
              Gates(level: .ok, startsAlerts: false, menuFigure: 50, reset: "—", hint: nil)),
-            ("an account the client is no longer signed in to", Reading(isCurrent: false),
-             Gates(level: nil, startsAlerts: false, startsCredits: false, menuFigure: nil, status: "Last read 1m ago", reset: "—", hint: nil,
-                   keepsLeftOutWindow: true, keepsLeftOutRow: true)),
         ]
         let store = try makeStore([window])
         let settings = try makeSettings([window, spark])

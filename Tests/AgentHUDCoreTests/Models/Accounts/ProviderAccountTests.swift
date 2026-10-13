@@ -45,17 +45,18 @@ final class ProviderAccountTests: XCTestCase {
         XCTAssertEqual(restored.observedAt, now)
     }
 
-    func testSwitchingAccountsKeepsTheLastReadingWithoutMixingCredits() async throws {
+    func testSwitchingAccountsRetiresThePreviousReadingWithoutMixingCredits() async throws {
         let provider = RetainedUsageProvider(provider: Sequence([
             report(account: accountA, remaining: 0, at: now, credits: 2),
             report(account: accountB, remaining: 100, at: now.addingTimeInterval(120), credits: nil)
         ]))
         _ = try await provider.fetchUsage(agents: [], historyHours: 24)
         let switched = try await provider.fetchUsage(agents: [], historyHours: 24)
-        XCTAssertEqual(switched.snapshot(for: accountA.windowID("codex"))?.remainingPct, 0, "the previous account keeps its last reading")
-        XCTAssertEqual(switched.snapshot(for: accountA.windowID("codex"))?.updatedAt, now)
+        XCTAssertNil(switched.snapshot(for: accountA.windowID("codex")), "a confirmed replacement retires the previous account's quota")
+        XCTAssertEqual(switched.discoveredAgents.map(\.id), [accountB.windowID("codex")])
         XCTAssertEqual(switched.snapshot(for: accountB.windowID("codex"))?.remainingPct, 100)
-        XCTAssertEqual(switched.accounts?["Codex"]?.map(\.isCurrent), [true, false])
+        XCTAssertEqual(switched.accounts?["Codex"]?.map(\.account), [accountB])
+        XCTAssertFalse(ReportView.isPresent(descriptor(accountA), in: switched))
         XCTAssertFalse(switched.isCurrent(descriptor(accountA)))
         XCTAssertTrue(switched.isCurrent(descriptor(accountB)))
         XCTAssertNil(switched.codexResetCredits, "earned resets belong to the account that reported them")
@@ -141,7 +142,7 @@ final class ProviderAccountTests: XCTestCase {
         }, sessions: [], discoveredAgents: agents, accounts: ["Codex": [
             old, current,
             .init(account: accountB, label: "b@example.com", plan: "pro", observedAt: now),
-            .init(account: otherWorkspace, label: "a@example.com", plan: "plus", observedAt: now, isCurrent: false)
+            .init(account: otherWorkspace, home: "pi:work", label: "a@example.com", plan: "plus", observedAt: now)
         ]])
         let group = try XCTUnwrap(AgentSettingsGroup.make(sources: [], agents: agents, report: report).first)
         XCTAssertEqual(group.accounts.count, 3, "client-home history is not another account")
@@ -159,7 +160,7 @@ final class ProviderAccountTests: XCTestCase {
     }
 
     @MainActor
-    func testSuccessfulCodexInventoryRetiresMissingWindowsButKeepsOtherAccounts() async throws {
+    func testSuccessfulCodexInventoryRetiresMissingWindowsAndFormerAccounts() async throws {
         let spark = AgentDescriptor(id: accountA.windowID("codex:spark:primary"), vendor: "Codex", model: "Spark", source: "", enabled: true, account: accountA)
         let original = UsageReport(generatedAt: now, snapshots: [
             .init(agentId: spark.id, remainingPct: 100, updatedAt: now),
@@ -172,13 +173,13 @@ final class ProviderAccountTests: XCTestCase {
         let updated = try await provider.fetchUsage(agents: [], historyHours: 24)
         XCTAssertNil(updated.snapshot(for: spark.id))
         XCTAssertFalse(updated.discoveredAgents.contains { $0.id == spark.id })
-        XCTAssertNotNil(updated.snapshot(for: accountB.windowID("codex")))
+        XCTAssertNil(updated.snapshot(for: accountB.windowID("codex")))
         let suite = "InventoryTests.\(UUID().uuidString)", defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = SettingsStore(defaults: defaults, defaultAgents: [spark, descriptor(accountB)])
         settings.mergeDiscovered(updated.discoveredAgents, accounts: updated.accounts, replaceQuotaWindows: true)
         XCTAssertFalse(settings.agents.contains { $0.id == spark.id })
-        XCTAssertTrue(settings.agents.contains { $0.account == accountB })
+        XCTAssertFalse(settings.agents.contains { $0.account == accountB })
     }
 
     func testFailedPollKeepsTheCurrentAccountAndUnseenAccountsRetire() async throws {
@@ -202,7 +203,8 @@ final class ProviderAccountTests: XCTestCase {
         let provider = RetainedUsageProvider(provider: Sequence([report(account: accountA, remaining: 40, at: now, credits: nil), signedOut, forgotten]))
         _ = try await provider.fetchUsage(agents: [], historyHours: 24)
         let kept = try await provider.fetchUsage(agents: [], historyHours: 24)
-        XCTAssertNotNil(kept.snapshot(for: accountA.windowID("codex")), "no current account still shows the last reading")
+        XCTAssertNil(kept.snapshot(for: accountA.windowID("codex")), "confirmed sign-out retires the account's quota immediately")
+        XCTAssertEqual(kept.accounts?["Codex"], [])
         let cleared = try await provider.fetchUsage(agents: [], historyHours: 24)
         XCTAssertNil(cleared.snapshot(for: accountA.windowID("codex")))
         XCTAssertEqual(cleared.accounts?["Codex"], [])

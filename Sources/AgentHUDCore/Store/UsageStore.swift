@@ -46,7 +46,9 @@ public final class UsageStore {
     @ObservationIgnored public var sampleTurnCalls: (@MainActor (LiveSession, SessionUsage.Turn) -> [TurnCall])?
     public var glowHidden = false
     /// Advances every few seconds so countdowns re-render.
-    public internal(set) var now = Date()
+    public internal(set) var now: Date
+    /// The time the store runs on: the wall clock, or the demo's own (`DemoClock`).
+    @ObservationIgnored public let clock: @Sendable () -> Date
     /// The turns clients' prompt and Stop hooks saw, by session id, which a host that receives those hooks hands in. A hook
     /// turn takes the place of what a session's log says wherever the hooks saw more
     /// (`SessionPhase.hookPrevails(_:over:lastEventAt:)`), so the panel follows a Stop hook at once.
@@ -66,9 +68,11 @@ public final class UsageStore {
 
     /// `hooks` let a host choose the history window, publish each provider report and merge it into the displayed report.
     public init(provider: any UsageProvider, settings: SettingsStore, accessAllowed: @escaping () -> Bool = { true },
-                hooks: UsageCollectionHooks = UsageCollectionHooks()) {
+                hooks: UsageCollectionHooks = UsageCollectionHooks(), clock: @escaping @Sendable () -> Date = { Date() }) {
         self.settings = settings
         self.accessAllowed = accessAllowed
+        self.clock = clock
+        now = clock()
         collector = UsageCollector(provider: provider, settings: settings, hooks: hooks)
         collector.store = self
     }
@@ -108,7 +112,7 @@ public final class UsageStore {
         collector.forgetLocalReport()
         checkedAt = nil
         lastError = nil
-        now = Date()
+        now = clock()
     }
 
     /// Calls `handler` with what each newly displayed report changed, until the returned observation is released or cancelled.
@@ -145,7 +149,7 @@ public final class UsageStore {
     }
 
     public func pause(for interval: TimeInterval) {
-        pausedUntil = Date().addingTimeInterval(interval)
+        pausedUntil = clock().addingTimeInterval(interval)
     }
 
     public func resume() {

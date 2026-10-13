@@ -34,6 +34,21 @@ struct HoverPanelView: View {
     /// The row whose questions are open for answering here rather than in the agent.
     var answeringSessionID: String? = nil
     var onAnswerSession: (String?) -> Void = { _ in }
+    /// Set on a dock that separates its agents: the panel is this one agent's, and shows nothing of the others.
+    var focusVendor: String? = nil
+
+    /// Whether something belongs to the agent this panel is for. Agents that share a mark share a panel.
+    private func focused(_ vendor: String?) -> Bool {
+        guard let focusVendor else { return true }
+        return vendor.map { AgentArtwork.markKey($0) == AgentArtwork.markKey(focusVendor) } ?? false
+    }
+
+    private var quotaGroups: [(vendor: String, rows: [AgentRow])] { store.rowGroups.filter { focused($0.vendor) } }
+    private var billing: [APIBilling] { store.enabledBilling.filter { focused($0.vendor) } }
+    private var consumers: [AgentDescriptor] { store.consumers.filter { focused($0.vendor) } }
+    private var tokenFilter: TokenModelFilter {
+        focusVendor == nil ? TokenModelFilter() : TokenModelFilter(consumerIDs: Set(consumers.map(\.id)))
+    }
 
     private let theme = Theme.island
     private let spacing: CGFloat = 10
@@ -79,18 +94,25 @@ struct HoverPanelView: View {
                                       waitingRequests: waitingRequests).id(alert.id)
                     .padding(.bottom, 4)
             }
-            if store.settings.settings.showIslandQuota, !store.rows.isEmpty {
+            // The quota block names its agent; without one the panel still has to say whose it is.
+            if let focusVendor, !store.settings.settings.showIslandQuota || quotaGroups.isEmpty {
+                Text(focusVendor).font(.ui(13, .semibold))
+            }
+            if store.settings.settings.showIslandQuota, !quotaGroups.isEmpty {
                 quotaBlock
             }
             if store.settings.settings.showIslandQuota {
-                ForEach(store.enabledBilling) { billing in
+                ForEach(billing) { billing in
                     APIBillingCard(billing: billing, store: store, theme: theme, compact: true)
                         .padding(.top, 8)
                         .topDivider(theme.divider)
                 }
             }
-            if store.settings.settings.showIslandTokens, store.isLoading || store.isIndexing || !store.consumers.isEmpty {
-                TokenConsumptionChart(store: store, theme: theme, context: .island, compact: true, onOpenStats: onOpenStats)
+            if store.settings.settings.showIslandTokens, store.isLoading || store.isIndexing || !consumers.isEmpty {
+                TokenConsumptionChart(store: store, theme: theme, context: .island, modelFilter: tokenFilter,
+                                      compact: true, onOpenStats: onOpenStats)
+                    // The chart keeps its filter as state, so another agent's panel is another chart.
+                    .id(focusVendor)
                     .padding(.top, 8)
                     .topDivider(theme.divider)
             }
@@ -102,7 +124,7 @@ struct HoverPanelView: View {
 
     private var quotaBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(store.rowGroups.enumerated()), id: \.element.vendor) { index, group in
+            ForEach(Array(quotaGroups.enumerated()), id: \.element.vendor) { index, group in
                 ProviderQuotaBlock(store: store, vendor: group.vendor, rows: group.rows)
                 .padding(.top, index > 0 ? 8 : 0)
                 .topDivider(index > 0 ? theme.divider : .clear)
@@ -122,11 +144,11 @@ struct HoverPanelView: View {
     /// row's title returns to its agent, or opens its session page where the client names no destination, and its
     /// token count opens usage.
     private var sessionLine: some View {
-        let rows = Self.sessionRows(store)
+        let rows = Self.sessionRows(store, vendor: focusVendor)
         let running = rows.running, shown = rows.shown
-        let hasAbove = store.lastError != nil || alert.map { !$0.isSessionEvent } == true
-            || (store.settings.settings.showIslandQuota && (!store.rows.isEmpty || !store.enabledBilling.isEmpty))
-            || (store.settings.settings.showIslandTokens && (store.isLoading || store.isIndexing || !store.consumers.isEmpty))
+        let hasAbove = store.lastError != nil || alert.map { !$0.isSessionEvent } == true || focusVendor != nil
+            || (store.settings.settings.showIslandQuota && (!quotaGroups.isEmpty || !billing.isEmpty))
+            || (store.settings.settings.showIslandTokens && (store.isLoading || store.isIndexing || !consumers.isEmpty))
         return VStack(alignment: .leading, spacing: 6) {
             Button { openSessions() } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -324,11 +346,14 @@ struct HoverPanelView: View {
 
     /// The island's summary: local work in flight and sessions last active in the past day, with waiting before
     /// running, newest created first, then the most recently ended. The full session list holds any hidden rows.
-    static func sessionRows(_ store: UsageStore) -> (running: [LiveSession], shown: [LiveSession], more: Int) {
+    /// `vendor` keeps only the sessions of the agents drawn with that vendor's mark.
+    static func sessionRows(_ store: UsageStore, vendor: String? = nil) -> (running: [LiveSession], shown: [LiveSession], more: Int) {
         // Account-wide API receipts belong to statistics, not this Mac's local activity summary.
         let view = store.view, cutoff = view.now.addingTimeInterval(-sessionRecency)
+        let mark = vendor.map(AgentArtwork.markKey)
         let candidates = view.sessions.filter {
             !$0.session.accountWide && ($0.phase.isInFlight || $0.lastEventAt >= cutoff)
+                && (mark == nil || ($0.source.agentVendor ?? $0.source.vendor).map(AgentArtwork.markKey) == mark)
         }
         let active = candidates.filter(\.phase.isInFlight).sorted {
             let lhsWaiting = $0.phase.state == .waitingForApproval

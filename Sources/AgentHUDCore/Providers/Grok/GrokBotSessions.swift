@@ -29,6 +29,18 @@ enum GrokBotSessions: LocalSessionLayout {
         return result
     }
 
+    /// The signed-in account's bots and rooms by their native ids, in roster order; none while the roster cannot be read.
+    static func agentIDs(in directory: URL) -> [String] {
+        guard let account = GrokBotCache.currentAccount(in: directory) else { return [] }
+        let key = GrokBotCache.rosterKey(account: account)
+        guard let value = try? GrokBotCache.value(at: GrokBotCache.url(for: key, in: directory), key: key, schema: 4) else { return [] }
+        var seen = Set<String>()
+        return (value["rows"].arrayValue ?? []).compactMap { row in
+            guard let id = row["id"].stringValue, GrokBotCache.isAgentID(id), seen.insert(id).inserted else { return nil }
+            return id
+        }
+    }
+
     static func read(_ url: URL) throws -> ProviderSessions {
         let directory = url.deletingLastPathComponent()
         guard let account = GrokBotCache.currentAccount(in: directory),

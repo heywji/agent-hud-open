@@ -21,15 +21,27 @@ enum LogoImages {
         var light: Bool
     }
 
-    private static var cache: [Key: CGImage] = [:]
+    private struct Baked {
+        let image: CGImage
+        let visibleBounds: CGRect
+    }
 
-    /// The baked mark, and how far it overflows the nominal side on each edge.
-    static func image(_ key: Key) -> CGImage? {
+    private static var cache: [Key: Baked] = [:]
+
+    static func image(_ key: Key) -> CGImage? { baked(key)?.image }
+
+    /// The nontransparent pixels of the final bitmap, including the outline. Coordinates run down from
+    /// its top-left corner and are normalized to the entire bitmap, including its outline canvas.
+    /// A pixel occupies its full cell: the last visible pixel's outer edge is the rect's maximum.
+    static func visibleBounds(_ key: Key) -> CGRect { baked(key)?.visibleBounds ?? .zero }
+
+    private static func baked(_ key: Key) -> Baked? {
         if let hit = cache[key] { return hit }
         guard let image = render(key) else { return nil }
+        let baked = Baked(image: image, visibleBounds: visibleBounds(in: image))
         if cache.count > 96 { cache.removeAll(keepingCapacity: true) }
-        cache[key] = image
-        return image
+        cache[key] = baked
+        return baked
     }
 
     static func invalidate() { cache.removeAll(keepingCapacity: true) }
@@ -72,9 +84,29 @@ enum LogoImages {
         return context.makeImage()
     }
 
+    private static func visibleBounds(in image: CGImage) -> CGRect {
+        guard let data = image.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else { return .zero }
+        let width = image.width, height = image.height, stride = image.bytesPerRow
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        // render makes RGBA pixels. Read the CGImage's raster rows, whose first row is the visual top;
+        // these are image coordinates, rather than the bitmap context's upward-running drawing space.
+        for y in 0..<height {
+            for x in 0..<width where bytes[y * stride + x * 4 + 3] > 0 {
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX else { return .zero }
+        return CGRect(x: CGFloat(minX) / CGFloat(width), y: CGFloat(minY) / CGFloat(height),
+                      width: CGFloat(maxX - minX + 1) / CGFloat(width),
+                      height: CGFloat(maxY - minY + 1) / CGFloat(height))
+    }
+
     /// How dark the finished outline is. Enough to separate a white mark from a pale wallpaper, not enough
     /// to read as a border drawn around it.
-    private static let outlineOpacity: CGFloat = 0.5
+    static let outlineOpacity: CGFloat = 0.5
     /// Passes over the ring. Smearing an anti-aliased silhouette leaves a soft edge however thin the offset
     /// is; drawing it again drives the half-covered pixels to opaque, which is what makes the line crisp
     /// rather than a haze around the mark.

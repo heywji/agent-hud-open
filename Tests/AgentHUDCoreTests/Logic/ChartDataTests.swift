@@ -173,6 +173,27 @@ final class ChartDataTests: XCTestCase {
         XCTAssertEqual(ChartData.weekdayTime(now, calendar: calendar), "周日 14:32")
     }
 
+    func testAPeriodInsideOneDayWritesItsDateOnce() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        func date(_ day: Int, _ hour: Int, _ minute: Int = 0) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 10, day: day, hour: hour, minute: minute))!
+        }
+        L10n.setLanguage(.en)
+        defer { L10n.setLanguage(.zhHans) }
+        XCTAssertEqual(ChartData.period(DateInterval(start: date(11, 23), end: date(11, 23, 15)), calendar: calendar),
+                       "Sun 11 Oct at 23:00 – 23:15")
+        // The last quarter hour ends at midnight and still belongs to its own day.
+        XCTAssertEqual(ChartData.period(DateInterval(start: date(11, 23, 45), end: date(12, 0)), calendar: calendar),
+                       "Sun 11 Oct at 23:45 – 00:00")
+        XCTAssertEqual(ChartData.period(DateInterval(start: date(11, 0), end: date(12, 0)), calendar: calendar), "Sun 11 Oct")
+        XCTAssertEqual(ChartData.period(DateInterval(start: date(11, 23), end: date(12, 1)), calendar: calendar),
+                       "Sun 11 Oct at 23:00 – Mon 12 Oct at 01:00")
+        L10n.setLanguage(.zhHans)
+        XCTAssertEqual(ChartData.period(DateInterval(start: date(11, 23), end: date(11, 23, 15)), calendar: calendar),
+                       "10月11日 周日 23:00 – 23:15")
+    }
+
     func testConcreteDatesDistinguishMonthBoundariesAndFollowTheDateLocale() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

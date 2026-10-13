@@ -73,7 +73,7 @@ final class AntigravityPermissionsTests: XCTestCase, @unchecked Sendable {
     private func client(_ transport: Transport, endpoints: [AntigravityService.Endpoint]? = nil) -> AntigravityPermissions {
         var client = AntigravityPermissions()
         let locations = endpoints ?? [endpoint], now = now
-        client.discover = { locations }
+        client.discover = { _ in locations }
         client.clock = { now }
         client.http.send = { try await transport.send($0) }
         return client
@@ -123,6 +123,35 @@ final class AntigravityPermissionsTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(requests.count, 2, "both discovered services were queried")
     }
 
+    func testARememberedServiceThatQuitIsLookedForAgainBeforeTheClientIsUnavailable() async throws {
+        let quit = AntigravityService.Endpoint(pid: 43,
+            base: URL(string: "https://127.0.0.1:42112/exa.language_server_pb.LanguageServerService/")!, token: "other-fixture-token")
+        var client = client(Transport([]))
+        let endpoint = endpoint, answer = try JSONEncoder().encode(summary([step()])), calls = Calls()
+        // The remembered pair holds a service that has quit; the fresh search finds only the one still running.
+        client.discover = { fresh in
+            await calls.searched(fresh)
+            return fresh ? [endpoint] : [endpoint, quit]
+        }
+        client.http.send = { request in
+            await calls.requested(request.url?.port)
+            guard request.url?.port == 42111 else { throw ProviderFailure.format }
+            return answer
+        }
+        let fetched = try await client.fetch()
+        XCTAssertEqual(fetched.count, 1, "the running service's request stays on screen when another service quits")
+        let searches = await calls.searches, ports = await calls.ports
+        XCTAssertEqual(searches, [false, true])
+        XCTAssertEqual(ports, [42111, 42112, 42111])
+    }
+
+    private actor Calls {
+        var searches: [Bool] = []
+        var ports: [Int?] = []
+        func searched(_ fresh: Bool) { searches.append(fresh) }
+        func requested(_ port: Int?) { ports.append(port) }
+    }
+
     func testEachProcessCanAnswerThroughAnAlternativeEndpoint() async throws {
         let alternative = AntigravityService.Endpoint(pid: endpoint.pid,
             base: URL(string: "https://127.0.0.1:42112/exa.language_server_pb.LanguageServerService/")!, token: endpoint.token)
@@ -140,7 +169,7 @@ final class AntigravityPermissionsTests: XCTestCase, @unchecked Sendable {
         let entered = Gate(), resume = Gate(), transport = Transport([]), request = try pending()
         var client = client(transport)
         let endpoint = endpoint
-        client.discover = {
+        client.discover = { _ in
             await entered.open()
             await resume.wait()
             return [endpoint]

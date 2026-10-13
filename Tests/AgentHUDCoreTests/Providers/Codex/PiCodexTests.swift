@@ -125,7 +125,7 @@ final class PiCodexTests: XCTestCase {
         XCTAssertEqual(view.assessment(of: try XCTUnwrap(nativeSection.account)).status, .normal)
         XCTAssertEqual(view.assessment(of: try XCTUnwrap(piSection.account)).status, .readFailed(reason: "Pi login expired"))
         XCTAssertEqual(failed.observation(accountID: piID)?.observedAt, now, "a failure keeps the original reading time")
-        XCTAssertFalse(try XCTUnwrap(failed.observation(accountID: piID)).isCurrent)
+        XCTAssertTrue(try XCTUnwrap(failed.observation(accountID: piID)).isCurrent, "a failed identity read does not confirm sign-out")
         XCTAssertEqual(failed.resetCredits(for: nativeID)?.availableCount, 2)
         XCTAssertTrue(nativeSection.rows.allSatisfy { $0.assessment.confirmsEvents })
         XCTAssertTrue(piSection.rows.allSatisfy { !$0.assessment.showsLevel })

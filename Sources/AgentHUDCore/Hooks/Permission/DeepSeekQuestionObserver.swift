@@ -26,8 +26,14 @@ public final class DeepSeekQuestionObserver {
     private let resolutionMemory: TimeInterval = 120
     private var observation: Stream?
 
+    /// A host that started since the last search is found this much later. One that quit ends its own stream.
+    nonisolated static let discoveryInterval: TimeInterval = 10
+    /// The ports the last search found. Finding them lists every process, so the refreshes that follow each other
+    /// share one search.
+    nonisolated private static let remembered = Remembered(lifetime: discoveryInterval) { await discoverPorts() }
+
     /// What discovery runs; the tests replace these instead of starting processes.
-    var discover: @Sendable () async -> [Int] = { await DeepSeekQuestionObserver.discoverPorts() }
+    var discover: @Sendable () async -> [Int] = { (try? await DeepSeekQuestionObserver.remembered.value()) ?? [] }
     var clock: @Sendable () -> Date = { Date() }
     /// Opens the event stream for a port. The closure returns only when the connection ends; it hands each frame's
     /// JSON to `onFrame` and gives up when asked to stop.
@@ -178,7 +184,8 @@ public final class DeepSeekQuestionObserver {
     ) async -> [Int] {
         guard let output = try? await inspect("/bin/ps", ["-U", String(getuid()), "-o", "pid=,command="]) else { return [] }
         var ports: Set<Int> = []
-        for line in output.split(separator: "\n") {
+        // Only a web profile's host asks questions; the lines of every other process are never taken apart.
+        for line in ProcessLines.mentioning(["--profile web", "--profile=web"], in: output) {
             let command = line.split(maxSplits: 1, whereSeparator: \.isWhitespace).last.map(String.init) ?? ""
             guard isHarness(command) else { continue }
             if let port = portFlag(command: command).flatMap(Int.init), (1...65535).contains(port) {

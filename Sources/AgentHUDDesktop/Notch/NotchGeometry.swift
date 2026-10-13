@@ -4,7 +4,8 @@ import AgentHUDCore
 /// Where the HUD sits on one screen, in global screen coordinates.
 ///
 /// In notch mode the collapsed rect is the physical notch, or a bar standing in for one on a display
-/// without. In logo mode it is the queue's strip, parked along an edge at the placement's offset.
+/// without. In a docked mode it is the strip the logo queue or the Simple panel takes, parked along an edge
+/// at the placement's offset.
 struct NotchGeometry: Equatable {
     let screenFrame: CGRect
     let mode: HUDMode
@@ -15,7 +16,7 @@ struct NotchGeometry: Equatable {
     /// Convex radius of the corners that face into the screen.
     let cornerRadius: CGFloat
     let backingScale: CGFloat
-    /// The screen's menu bar height, which every logo-mode size is derived from.
+    /// The screen's menu bar height, used by the stand-in notch.
     let menuBarHeight: CGFloat
 
     static let fallbackWidth: CGFloat = 200
@@ -29,16 +30,16 @@ struct NotchGeometry: Equatable {
     /// - screen: the display this HUD belongs to. Each screen is measured on its own — its own notch, its
     ///   own menu bar, its own scale — because two displays can be in different modes at once.
     /// - placement: how that screen presents the HUD.
-    /// - queue: the measured size of the logo queue's marks, when the placement asks for one.
+    /// - queue: the measured logo strip, including the configured distance around its marks.
     static func detect(screen: NSScreen?, placement: ScreenPlacement, queue: CGSize? = nil) -> NotchGeometry {
         let frame = screen?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let menuBar = screen.map { max(22, $0.frame.maxY - $0.visibleFrame.maxY) } ?? 24
         let scale = screen?.backingScaleFactor ?? 2
         let notch = screen.flatMap { $0.safeAreaInsets.top > 0 ? notchRect(of: $0) : nil }
 
-        if placement.mode == .logos, let queue {
-            let rect = stripRect(queue: queue, frame: frame, menuBar: menuBar, placement: placement)
-            return NotchGeometry(screenFrame: frame, mode: .logos, edge: placement.edge, hasNotch: notch != nil,
+        if placement.mode.isDocked, let queue {
+            let rect = stripRect(queue: queue, frame: frame, placement: placement)
+            return NotchGeometry(screenFrame: frame, mode: placement.mode, edge: placement.edge, hasNotch: notch != nil,
                                  rect: rect, cornerRadius: logoCornerRadius, backingScale: scale, menuBarHeight: menuBar)
         }
         if let notch {
@@ -60,14 +61,14 @@ struct NotchGeometry: Equatable {
 
     /// Where the queue sits, centred on `placement.offset` along its edge and kept on screen. Nothing is drawn
     /// here — the marks stand on their own — so the rect only has to hold them and catch the pointer; the
-    /// padding is hover slack, not a visible strip.
-    static func stripRect(queue: CGSize, frame: CGRect, menuBar: CGFloat,
+    /// perpendicular padding is the configured distance between each logo and its screen edge.
+    static func stripRect(queue: CGSize, frame: CGRect,
                           placement: ScreenPlacement) -> CGRect {
         // The run is the marks themselves: the backdrop is clipped to this rect, and anything added here
         // would show up as backdrop reaching past the last mark. Whole points, because the spacing is a
         // fraction of the logo and a window on a half point puts every mark on a blurred pixel boundary.
         let long = (placement.edge.isHorizontal ? queue.width : queue.height).rounded()
-        let thick = max(menuBar, placement.edge.isHorizontal ? queue.height : queue.width)
+        let thick = placement.edge.isHorizontal ? queue.height : queue.width
         switch placement.edge {
         case .top, .bottom:
             // The notch is not avoided: a queue centred on the screen reads as centred, and sliding it off
@@ -110,7 +111,8 @@ struct NotchGeometry: Equatable {
         let readingCoordinate = edge.isHorizontal ? point.x - screenFrame.minX : screenFrame.maxY - point.y
         let origin = readingCoordinate - measuredRun * grabFraction
         var result = placement
-        result.mode = .logos
+        // Only the notch has to become something else to leave its place; a docked mode stays what it is.
+        if result.mode == .notch { result.mode = .logos }
         result.edge = edge
         result.offset = travel > 0 ? Double(min(1, max(0, origin / travel))) : 0.5
         return result
@@ -126,7 +128,7 @@ struct NotchGeometry: Equatable {
     /// every time the panel opens and closes. Past the screen's edge there is nothing to show anyway.
     var islandFrame: CGRect {
         let slack = Self.collapsedTopRadius
-        guard mode != .logos else {
+        guard !mode.isDocked else {
             let grown = rect.insetBy(dx: -slack, dy: -slack)
             switch edge {
             case .top: return CGRect(x: grown.minX, y: grown.minY, width: grown.width, height: grown.height - slack)

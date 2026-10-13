@@ -255,4 +255,31 @@ final class CollectionSignalTests: XCTestCase, @unchecked Sendable {
         store.replace(report: UsageReport(generatedAt: now, snapshots: [], sessions: []))
         XCTAssertEqual(received.count, 1)
     }
+
+    /// A client that keeps its log open reaches the file watch late, so recent logs are compared with their last look.
+    @MainActor
+    func testARecentLogThatGrewIsReportedOnceAndAFirstLookOnlyNotesIt() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("agenthud-logs-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let quiet = directory.appendingPathComponent("quiet.jsonl"), busy = directory.appendingPathComponent("busy.jsonl")
+        try Data("a\n".utf8).write(to: quiet)
+        try Data("a\n".utf8).write(to: busy)
+        let paths = [quiet.path, busy.path, directory.appendingPathComponent("gone.jsonl").path]
+        var known: [String: String] = [:]
+        XCTAssertEqual(UsageCollector.changedLogs(paths, known: &known), [], "The read that listed a log has just read it")
+        XCTAssertEqual(Set(known.keys), [quiet.path, busy.path], "A log that is not there is not kept")
+        XCTAssertEqual(UsageCollector.changedLogs(paths, known: &known), [])
+
+        // Appended through a handle that stays open, as Codex writes its rollouts.
+        let handle = try FileHandle(forWritingTo: busy)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("b\n".utf8))
+        XCTAssertEqual(UsageCollector.changedLogs(paths, known: &known), [busy.path])
+        XCTAssertEqual(UsageCollector.changedLogs(paths, known: &known), [], "One change is reported once")
+
+        XCTAssertEqual(UsageCollector.changedLogs([quiet.path], known: &known), [])
+        XCTAssertEqual(Set(known.keys), [quiet.path], "A session that is no longer recent is forgotten")
+    }
 }

@@ -170,6 +170,20 @@ public enum ChartData {
             .weekday(.abbreviated).month(.abbreviated).day().hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
     }
 
+    /// A stretch of time with its date written once when it stays inside one day: "Sun 11 Oct at 23:00 – 23:15",
+    /// and the date alone for a whole day. A stretch that ends at midnight still belongs to the day it started in.
+    public static func period(_ interval: DateInterval, calendar: Calendar = .current) -> String {
+        let style = Date.FormatStyle(locale: L10n.dateLocale, calendar: calendar, timeZone: calendar.timeZone)
+        guard let day = calendar.dateInterval(of: .day, for: interval.start), interval.end <= day.end else {
+            return "\(dateTime(interval.start, calendar: calendar)) – \(dateTime(interval.end, calendar: calendar))"
+        }
+        if interval == day {
+            return interval.start.formatted(style.weekday(.abbreviated).month(.abbreviated).day())
+        }
+        let end = interval.end.formatted(style.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+        return "\(dateTime(interval.start, calendar: calendar)) – \(end)"
+    }
+
     /// "周二 16:10"
     public static func weekdayTime(_ date: Date, calendar: Calendar = .current) -> String {
         let hh = calendar.component(.hour, from: date), mm = calendar.component(.minute, from: date)

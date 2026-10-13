@@ -3,7 +3,7 @@ import Foundation
 
 // Protocol/SQLite auth derived from CodexBar; event session identity follows Tokscale. See THIRD_PARTY_NOTICES.txt.
 actor CursorClient {
-    struct Session: Sendable { let account: String; let cookie: String; var email: String? = nil }
+    struct Session: Sendable { let account: String; let cookie: String; var email: String? = nil; var token = "" }
     let database: URL
     /// The agent CLI's folder, `~/.cursor`, where its chats and ACP sessions keep their names.
     let agentFolder: URL
@@ -52,7 +52,7 @@ actor CursorClient {
               user.unicodeScalars.allSatisfy(CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-")).contains) else {
             throw ProviderFailure.login("Cursor")
         }
-        return Session(account: RecordCoding.hash([user]), cookie: "WorkosCursorSessionToken=\(user)%3A%3A\(token)")
+        return Session(account: RecordCoding.hash([user]), cookie: "WorkosCursorSessionToken=\(user)%3A%3A\(token)", token: token)
     }
 
     func quota() async throws -> ProviderQuota {
@@ -132,6 +132,15 @@ actor CursorClient {
             cached = (now, auth.account, start, previous)
             return previous
         }
+    }
+
+    /// The routines of the account's Grok Bot agents as the Bot service records them, each with the runs it lists. Grok
+    /// Bot signs in with the Cursor account, so the service answers Cursor's own token.
+    func grokBotAutomations(agentIDs: [String]) async throws -> ProviderJSON {
+        let auth = try session()
+        return try await http.json(URL(string: "https://api2.cursor.sh/aiserver.v1.GrokBotService/ListGrokBotAccountAutomations")!,
+            headers: ["Authorization": "Bearer \(auth.token)", "Connect-Protocol-Version": "1"],
+            body: .object(["agentIds": .array(agentIDs.map(ProviderJSON.string))]))
     }
 
     private func fetchEvents(auth: Session, since: Date, until: Date) async throws -> [ProviderJSON] {

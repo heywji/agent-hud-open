@@ -8,7 +8,8 @@ public enum QuotaForecast {
     /// The text of the window's outlook. A window that runs out only after its reset says what it will have used by
     /// then, as its island row does.
     public static func hint(snapshot: UsageSnapshot, insights: UsageInsights?, now: Date) -> String? {
-        let used = max(0, min(100, 100 - snapshot.remainingPct))
+        guard let remaining = snapshot.remainingPct else { return nil }
+        let used = max(0, min(100, 100 - remaining))
         // A fresh reading of an untouched window says so, whatever the previous cycle's pace was.
         if used == 0, let reset = snapshot.resetAt, reset > now, now.timeIntervalSince(snapshot.updatedAt) < maximumReadingAge {
             return L10n.text("额度充足 · 已用 0%", "Quota available · 0% used")

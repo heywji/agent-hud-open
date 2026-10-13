@@ -66,28 +66,26 @@ final class RowPresenceTests: XCTestCase {
                            "Codex: unlisted"],
                 settings: ["Claude: claude, claude-unseen, claude-off", "DeepSeek: deepseek", "Kimi: kimi-active, kimi-inactive",
                            "GLM: glm", codexRows])),
-            // A report that keeps no sightings and has no pool inventory shows every row but those of an account missing
-            // from its provider's inventory.
+            // A report that keeps no sightings and has no pool inventory still excludes former and unlisted accounts.
             ("a report without sightings or pool inventory", bare, Presence(
-                visible: everyRow.filter { $0 != "codex-unlisted" },
-                enabled: everyRow.filter { !["claude-off", "codex-unlisted"].contains($0) },
-                rows: ["claude", "claude-unseen", "kimi-active", "kimi-inactive", "glm", "codex-current", "codex-other (another account)"],
+                visible: everyRow.filter { !["codex-other", "codex-unlisted"].contains($0) },
+                enabled: everyRow.filter { !["claude-off", "codex-other", "codex-unlisted"].contains($0) },
+                rows: ["claude", "claude-unseen", "kimi-active", "kimi-inactive", "glm", "codex-current"],
                 billing: ["DeepSeek"],
-                groups: ["Claude: claude, claude-unseen", "Kimi: kimi-active, kimi-inactive", "GLM: glm", "Codex: codex-current, codex-other"],
-                sections: ["Claude: no account", "Kimi: kimi-active", "Kimi: kimi-inactive", "GLM: glm", "Codex: current",
-                           "Codex: other, not current"],
+                groups: ["Claude: claude, claude-unseen", "Kimi: kimi-active, kimi-inactive", "GLM: glm", "Codex: codex-current"],
+                sections: ["Claude: no account", "Kimi: kimi-active", "Kimi: kimi-inactive", "GLM: glm", "Codex: current"],
                 settings: ["Claude: claude, claude-unseen, claude-off", "DeepSeek: deepseek", "Kimi: kimi-active, kimi-inactive",
-                           "GLM: glm", "Codex: codex-current, codex-other; accounts current, other"])),
+                           "GLM: glm", "Codex: codex-current; accounts current"])),
             // An unlisted row, an inactive pool and a row of an account missing from its inventory go everywhere; the API
             // row's balance goes with its row.
             ("a report with sightings and a pool inventory", fuller, Presence(
-                visible: ["claude", "claude-off", "kimi-active", "glm", "codex-current", "codex-other"],
-                enabled: ["claude", "kimi-active", "glm", "codex-current", "codex-other"],
-                rows: ["claude", "kimi-active", "glm", "codex-current", "codex-other (another account)"],
+                visible: ["claude", "claude-off", "kimi-active", "glm", "codex-current"],
+                enabled: ["claude", "kimi-active", "glm", "codex-current"],
+                rows: ["claude", "kimi-active", "glm", "codex-current"],
                 billing: [],
-                groups: ["Claude: claude", "Kimi: kimi-active", "GLM: glm", "Codex: codex-current, codex-other"],
-                sections: ["Claude: no account", "Kimi: kimi-active", "GLM: glm", "Codex: current", "Codex: other, not current"],
-                settings: ["Claude: claude, claude-off", "Kimi: kimi-active", "GLM: glm", "Codex: codex-current, codex-other; accounts current, other"])),
+                groups: ["Claude: claude", "Kimi: kimi-active", "GLM: glm", "Codex: codex-current"],
+                sections: ["Claude: no account", "Kimi: kimi-active", "GLM: glm", "Codex: current"],
+                settings: ["Claude: claude, claude-off", "Kimi: kimi-active", "GLM: glm", "Codex: codex-current; accounts current"])),
         ]
         for (name, report, expected) in cases {
             let store = UsageStore(provider: DemoUsageProvider(), settings: try makeSettings(agents))

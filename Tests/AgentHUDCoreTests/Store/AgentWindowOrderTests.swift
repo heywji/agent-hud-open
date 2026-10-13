@@ -35,7 +35,7 @@ final class AgentWindowOrderTests: XCTestCase {
                     window("c", account: work)]
         let report = UsageReport(generatedAt: Date(), snapshots: [], sessions: [], accounts: ["Antigravity": [
             .init(account: work, label: "work@example.com", observedAt: Date()),
-            .init(account: personal, label: "personal@example.com", observedAt: Date(), isCurrent: false),
+            .init(account: personal, home: "work", label: "personal@example.com", observedAt: Date()),
         ]])
         let group = try XCTUnwrap(AgentSettingsGroup.make(sources: [], agents: rows, report: report).first)
         XCTAssertEqual(group.windowSections.map(\.id), [work.id, personal.id])

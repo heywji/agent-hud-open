@@ -24,6 +24,11 @@ enum AntigravityService {
         }
     }
 
+    /// A service that started since the last search is found this much later; one that quit is looked for at once.
+    static let discoveryInterval: TimeInterval = 10
+    /// What `permissionEndpoints` last found, shared by the polls that follow each other.
+    static let remembered = Remembered(lifetime: discoveryInterval) { try await permissionEndpoints() }
+
     static func running() async throws -> [Candidate] {
         candidates(try await ProviderCommand.run("/bin/ps", ["-U", String(getuid()), "-o", "pid=,command="]))
     }
@@ -63,11 +68,11 @@ enum AntigravityService {
         })
 
     static func candidates(_ output: String) -> [Candidate] {
-        output.split(separator: "\n").compactMap { line in
+        // Every accepted CLI or server names one of these; the hundreds of unrelated processes are never taken apart.
+        ProcessLines.mentioning(["antigravity", "agy"], in: output).compactMap { line in
             let pieces = line.split(maxSplits: 1, whereSeparator: \.isWhitespace)
             guard pieces.count == 2, let pid = Int(pieces[0]) else { return nil }
             let command = String(pieces[1]), lower = command.lowercased()
-            // Every accepted CLI or server names one of these; unrelated processes need no regex search.
             guard lower.contains("antigravity") || lower.contains("agy") else { return nil }
             let cli = lower.contains("/antigravity-cli/") || lower.contains("/antigravity_cli/")
                 || (lower.contains("agy") && agyPattern.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil)

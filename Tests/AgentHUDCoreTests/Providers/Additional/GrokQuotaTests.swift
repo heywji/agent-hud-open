@@ -44,7 +44,9 @@ final class GrokQuotaTests: XCTestCase {
 
     func testMissingJsonUsageRemainsUnknownAndInvalidWireCannotConfirmZero() throws {
         let json = try ProviderJSON.read(Data(#"{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2027-01-15T08:00:00Z","end":"2027-01-22T08:00:00Z"}}}"#.utf8))
-        XCTAssertTrue(try GrokClient.parse(json).windows.isEmpty)
+        let parsed = try GrokClient.parse(json)
+        XCTAssertEqual(parsed.windows.map(\.id), ["grok"])
+        XCTAssertNil(parsed.windows.first?.remaining)
         for data in [response(start: 1_800_000_001), response(end: 1_799_999_999), response(kind: 99),
                      response(percent: .nan), response(percent: -1), response(percent: 101),
                      response(percent: 20, extra: percent(10)), response(extra: [0]), response(extra: [128]),
@@ -87,7 +89,8 @@ final class GrokQuotaTests: XCTestCase {
             throw ProviderHTTPError(status: 503)
         }))
         let unknown = try await failed.fetch()
-        XCTAssertTrue(unknown.windows.isEmpty, "A failed retry must not manufacture a zero percentage")
+        XCTAssertEqual(unknown.windows.map(\.id), ["grok"])
+        XCTAssertNil(unknown.windows.first?.remaining, "A failed retry must not manufacture a zero percentage")
         XCTAssertNotNil(unknown.displayNotice)
         let explicit = GrokClient(home: root, http: ProviderHTTP(send: { request in
             XCTAssertNotEqual(request.httpMethod, "POST", "Published usage does not need a fallback request")

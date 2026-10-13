@@ -36,6 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in exit(await UsageProbe.run(settings: settings)) }
             return
         }
+        // A demo saved before the sample changed holds rows the sample no longer reads; it starts over from the sample's,
+        // keeping every other preference.
+        if options.demo, !settings.agents.contains(where: { row in DemoData.agents.contains { $0.id == row.id } }) {
+            settings.updateAgents { _ in DemoData.everyAgent }
+        }
         let store = UsageAssembly.store(settings: settings, ledger: options.demo ? nil : .open())
         if !options.demo, let executable = Bundle.main.executableURL {
             SessionObservers.configure(executable: executable, enabled: settings.settings.clientHooks)

@@ -7,6 +7,14 @@ struct IslandAlertCompactView: View {
     let height: CGFloat
     let onOpen: () -> Void
     var waitingRequests: [PermissionRequest] = []
+    @Environment(\.stripScale) private var scale
+    @Environment(\.compactWings) private var wings
+
+    /// What a finished turn's reminder says beside its agent.
+    static var replyStatus: String { L10n.text("有新回复", "New reply") }
+
+    /// A length at the scale of the dock this reminder grows from.
+    private func s(_ value: CGFloat) -> CGFloat { (value * scale).rounded() }
 
     var body: some View {
         switch alert {
@@ -20,19 +28,19 @@ struct IslandAlertCompactView: View {
         case .completion(let event):
             Button(action: onOpen) {
                 HStack(spacing: 0) {
-                    HStack(spacing: 8) {
-                        AgentLogo(vendor: event.agentVendor, size: 17)
-                        Text(event.agentVendor).font(.ui(13, .semibold)).lineLimit(1)
-                    }.frame(width: IslandController.alertWingWidth, alignment: .leading)
-                    Color.clear.frame(width: cameraWidth)
-                    HStack(spacing: 7) {
-                        TurnEndedSymbol()
-                        Text(L10n.text("有新回复", "New reply"))
-                            .font(.ui(12, .medium)).foregroundStyle(Color(alert.accent))
-                    }.frame(width: IslandController.alertWingWidth, alignment: .trailing)
+                    HStack(spacing: s(8)) {
+                        BotMark(vendor: event.agentVendor, size: s(17), phase: .done)
+                        Text(event.agentVendor).font(.ui(s(13), .semibold)).lineLimit(1)
+                    }.frame(width: wings?.leading ?? s(IslandController.alertWingWidth), alignment: .leading)
+                    Color.clear.frame(width: wings?.gap ?? cameraWidth)
+                    HStack(spacing: s(7)) {
+                        TurnEndedSymbol(size: s(16))
+                        Text(Self.replyStatus)
+                            .font(.ui(s(12), .medium)).foregroundStyle(Color(alert.accent))
+                    }.frame(width: wings?.trailing ?? s(IslandController.alertWingWidth), alignment: .trailing)
                 }
                 .foregroundStyle(.white)
-                .padding(.horizontal, IslandController.alertSidePadding).frame(height: height)
+                .padding(.horizontal, wings?.padding ?? s(IslandController.alertSidePadding)).frame(height: height)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -63,15 +71,15 @@ struct IslandAlertDetailView: View {
         case .completion(let event):
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 10) {
-                    AgentLogo(vendor: event.agentVendor, size: 24)
+                    BotMark(vendor: event.agentVendor, size: 24, phase: .done)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(event.agentVendor).font(.ui(13, .semibold))
-                        Text(event.model).font(.ui(10)).foregroundStyle(.white.opacity(0.45))
+                        Text(event.model).font(.ui(11)).foregroundStyle(.white.opacity(0.45))
                     }
                     Spacer()
                     TurnEndedSymbol()
                     Text(L10n.text("有新回复", "New reply"))
-                        .font(.ui(11)).foregroundStyle(Color(alert.accent))
+                        .font(.ui(12, .medium)).foregroundStyle(Color(alert.accent))
                     Button(action: onDismiss) {
                         Image(systemName: "xmark")
                             .font(.system(size: 11, weight: .semibold))
@@ -241,9 +249,9 @@ struct IslandAlertInlineView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(L10n.text("\(event.agentVendor) · 有新回复", "\(event.agentVendor) · New reply"))
                             .font(.ui(12, .medium)).foregroundStyle(Color(alert.accent))
-                        Text(event.task).font(.ui(10)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                        Text(event.task).font(.ui(11)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
                         if let message = event.message {
-                            Text(message).font(.ui(10)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+                            Text(message).font(.ui(11)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
                         }
                     }
                     Spacer()
@@ -267,11 +275,11 @@ private struct CompletionAlertActions: View {
         VStack(alignment: .leading, spacing: 8) {
             if navigationFailed && hasSession {
                 Text(L10n.text("无法回到会话，请重试或查看 Token 用量", "Couldn't return to session. Retry or view token usage."))
-                    .font(.ui(10)).foregroundStyle(.white.opacity(0.65))
+                    .font(.ui(11)).foregroundStyle(.white.opacity(0.65))
                     .fixedSize(horizontal: false, vertical: true)
             } else if !hasSession {
                 Text(L10n.text("暂时无法回到原会话", "Session return unavailable"))
-                    .font(.ui(10)).foregroundStyle(.white.opacity(0.5))
+                    .font(.ui(11)).foregroundStyle(.white.opacity(0.5))
             }
             HStack(spacing: 6) {
                 Button(action: onOpenUsage) {
@@ -310,9 +318,11 @@ private struct CompletionAlertActions: View {
 }
 
 private struct TurnEndedSymbol: View {
+    var size: CGFloat = 16
+
     var body: some View {
         Image(systemName: "text.bubble")
             .symbolRenderingMode(.palette)
-            .font(.system(size: 16, weight: .semibold)).foregroundStyle(Color(IslandAlert.turnAccent))
+            .font(.system(size: size, weight: .semibold)).foregroundStyle(Color(IslandAlert.turnAccent))
     }
 }

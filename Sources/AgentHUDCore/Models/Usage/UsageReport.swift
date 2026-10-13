@@ -71,7 +71,7 @@ public struct UsageReport: Hashable, Codable, Sendable {
     /// Nil keeps older cached reports decodable.
     public let accounts: [String: [AccountObservation]]?
     /// Providers whose accounts must be forgotten now, for example after the user withdrew consent to read them.
-    /// Unlike an empty inventory, which keeps earlier accounts as last readings, their readings, rows and settings retire at once.
+    /// Their readings, rows and settings retire even when the provider did not report an account inventory.
     public let forgottenAccountProviders: Set<String>?
     /// Notices by vendor, or by `ClientHome.sourceKey` for a login whose account this run could not yet identify.
     public let sourceNotices: [String: String]

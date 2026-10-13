@@ -168,7 +168,8 @@ struct PermissionQuestionCard: View {
         return HStack(alignment: .top, spacing: 8) {
             marker(picked).padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
-                Text(L10n.text("其他", "Other")).font(.ui(11, .medium)).foregroundStyle(PermissionColor.text)
+                Text(question.options.isEmpty ? L10n.text("回答", "Answer") : L10n.text("其他", "Other"))
+                    .font(.ui(11, .medium)).foregroundStyle(PermissionColor.text)
                 IslandTextField(
                     text: draft.own[page] ?? "",
                     placeholder: L10n.text("自己输入回答", "Type your own answer"),

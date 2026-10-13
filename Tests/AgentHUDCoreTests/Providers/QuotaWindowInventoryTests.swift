@@ -10,32 +10,31 @@ final class QuotaWindowInventoryTests: XCTestCase {
     private let legacyKeys = ["antigravity:legacy:gemini", "antigravity:legacy:claude-gpt"]
     private let summaryJSON = #"{"groups":[{"displayName":"Gemini Models","buckets":[{"bucketId":"gemini-weekly","displayName":"Weekly Limit Remaining","remainingFraction":0.7},{"bucketId":"gemini-5h","displayName":"Five Hour Limit Remaining","remainingFraction":0.8}]},{"displayName":"Claude and GPT models","buckets":[{"bucketId":"3p-weekly","displayName":"Weekly Limit Remaining","remainingFraction":0.9}]}]}"#
 
-    func testSuccessfulSummaryRetiresLegacyAndOmittedBucketWhileOtherAccountAndWindowSwitchesRemain() async throws {
+    func testSuccessfulSummaryRetiresLegacyOmittedBucketAndFormerAccountWhileWindowSwitchesRemain() async throws {
         let initialRows = (legacyKeys + modernKeys).map { row($0, account: current) }
             + [row(modernKeys[0], account: historical, enabled: false), row(modernKeys[2], account: historical, enabled: false)]
         let previous = savedReport(initialRows, at: now.addingTimeInterval(-60))
         let incoming = try await report(summary(), at: now)
         let updated = incoming.retainingReadings(from: previous)
         let currentIDs = Set(modernKeys.prefix(3).map(current.windowID))
-        let historicalIDs = Set(initialRows.filter { $0.account == historical }.map(\.id))
-        XCTAssertEqual(Set(updated.discoveredAgents.map(\.id)), currentIDs.union(historicalIDs))
-        XCTAssertEqual(Set(updated.snapshots.map(\.agentId)), currentIDs.union(historicalIDs))
-        XCTAssertEqual(Set(updated.rowSeenAt?.keys ?? Dictionary<String, Date>().keys), currentIDs.union(historicalIDs))
+        XCTAssertEqual(Set(updated.discoveredAgents.map(\.id)), currentIDs)
+        XCTAssertEqual(Set(updated.snapshots.map(\.agentId)), currentIDs)
+        XCTAssertEqual(Set(updated.rowSeenAt?.keys ?? Dictionary<String, Date>().keys), currentIDs)
         for key in legacyKeys + [modernKeys[3]] {
             XCTAssertNil(updated.snapshot(for: current.windowID(key)))
             XCTAssertNil(updated.consumerIdsByQuota[current.windowID(key)])
         }
-        XCTAssertEqual(updated.snapshot(for: historical.windowID(modernKeys[0]))?.updatedAt, previous.generatedAt)
-        XCTAssertFalse(updated.observation(accountID: historical.id)!.isCurrent)
+        XCTAssertNil(updated.snapshot(for: historical.windowID(modernKeys[0])))
+        XCTAssertNil(updated.observation(accountID: historical.id))
 
         let settings = SettingsStore(defaults: try makeDefaults(), defaultAgents: initialRows)
         settings.setAgent(id: current.windowID(modernKeys[0]), enabled: false)
-        let expected = settings.agents.filter { currentIDs.union(historicalIDs).contains($0.id) }
+        let expected = settings.agents.filter { currentIDs.contains($0.id) }
         settings.mergeDiscovered(from: updated)
         XCTAssertEqual(settings.agents.map(\.id), expected.map(\.id))
         XCTAssertEqual(settings.agents.map(\.enabled), expected.map(\.enabled))
         let groups = AgentSettingsGroup.make(sources: [], agents: settings.agents, report: updated)
-        XCTAssertEqual(Set(groups.flatMap(\.agents).map(\.id)), currentIDs.union(historicalIDs))
+        XCTAssertEqual(Set(groups.flatMap(\.agents).map(\.id)), currentIDs)
     }
 
     func testSummaryThenLegacyFallbackKeepsModernReadingsWithoutDuplicatingThatAccount() async throws {
@@ -61,7 +60,7 @@ final class QuotaWindowInventoryTests: XCTestCase {
         let previous = savedReport(oldRows, at: now.addingTimeInterval(-60))
         let fallback = try await report(legacy(account: current), at: now)
         let held = fallback.retainingReadings(from: previous)
-        let expected = Set(modernKeys.map(current.windowID) + legacyKeys.map(historical.windowID))
+        let expected = Set(modernKeys.map(current.windowID))
         XCTAssertEqual(Set(held.discoveredAgents.map(\.id)), expected)
         XCTAssertEqual(Set(held.snapshots.map(\.agentId)), expected)
         XCTAssertEqual(Set(held.rowSeenAt?.keys ?? Dictionary<String, Date>().keys), expected)
@@ -83,7 +82,7 @@ final class QuotaWindowInventoryTests: XCTestCase {
         let other = try await report(legacy(account: historical), at: now.addingTimeInterval(60))
         let switched = other.retainingReadings(from: first.startingRowClocks())
         XCTAssertEqual(Set(switched.discoveredAgents.filter { $0.account == historical }.map(\.windowKey)), Set(legacyKeys))
-        XCTAssertEqual(Set(switched.discoveredAgents.filter { $0.account == current }.map(\.id)), Set(first.discoveredAgents.map(\.id)))
+        XCTAssertTrue(switched.discoveredAgents.allSatisfy { $0.account == historical }, "the replaced account's modern windows retire")
         let later = now.addingTimeInterval(QuotaHistoryStore.retention + 60)
         let fallback = try await report(legacy(account: current), at: later)
         let expired = fallback.retainingReadings(from: first.startingRowClocks())
@@ -131,10 +130,10 @@ final class QuotaWindowInventoryTests: XCTestCase {
         let previous = savedReport([row(modernKeys[0], account: current), row(modernKeys[0], account: historical)], at: now.addingTimeInterval(-60))
         let incoming = try await report(quota, at: now)
         let updated = incoming.retainingReadings(from: previous)
-        XCTAssertEqual(updated.discoveredAgents.map(\.account), [historical])
+        XCTAssertTrue(updated.discoveredAgents.isEmpty)
         let settings = SettingsStore(defaults: try makeDefaults(), defaultAgents: previous.discoveredAgents)
         settings.mergeDiscovered(from: updated)
-        XCTAssertEqual(settings.agents.map(\.account), [historical])
+        XCTAssertTrue(settings.agents.isEmpty)
     }
 
     func testCompletenessRequiresExplicitInventoryCurrentAccountAndSoundReadAndSurvivesCopies() throws {
@@ -147,10 +146,10 @@ final class QuotaWindowInventoryTests: XCTestCase {
             let incoming = UsageReport(generatedAt: now, snapshots: [], sessions: [], readingIssues: sourceIssue.map { ["Antigravity": $0] } ?? [:],
                                        accounts: ["Antigravity": [account]])
             XCTAssertTrue(incoming.completeQuotaWindowInventories.isEmpty)
-            XCTAssertEqual(incoming.retainingReadings(from: previous).snapshots, previous.snapshots)
+            XCTAssertEqual(incoming.retainingReadings(from: previous).snapshots, isCurrent ? previous.snapshots : [])
             let settings = SettingsStore(defaults: try makeDefaults(), defaultAgents: previous.discoveredAgents)
             settings.mergeDiscovered(from: incoming)
-            XCTAssertEqual(settings.agents.count, 1)
+            XCTAssertEqual(settings.agents.count, isCurrent ? 1 : 0)
         }
         let full = AccountObservation(account: current, observedAt: now, quotaWindowIDs: Set(modernKeys.map(current.windowID)))
         XCTAssertEqual(full.with(isCurrent: false).quotaWindowIDs, full.quotaWindowIDs)
@@ -164,7 +163,7 @@ final class QuotaWindowInventoryTests: XCTestCase {
         XCTAssertThrowsError(try AntigravityClient.summary(json(#"{"groups":[{"buckets":[{"remainingFraction":1}]}]}"#)))
     }
 
-    func testHistoricalSummaryNamesUseRecordedCadenceWithoutChangingLegacyOrWindowState() throws {
+    func testFormerSummaryAccountsRetireWhileCurrentLegacyWindowStateRemains() throws {
         L10n.setLanguage(.en)
         defer { L10n.setLanguage(.system) }
         let old = [row(modernKeys[0], account: historical, enabled: false), row(modernKeys[2], account: historical, enabled: false),
@@ -172,11 +171,11 @@ final class QuotaWindowInventoryTests: XCTestCase {
         let previous = savedReport(old, at: now.addingTimeInterval(-60))
         let incoming = UsageReport(generatedAt: now, snapshots: [], sessions: [])
         let kept = incoming.retainingReadings(from: previous)
-        XCTAssertEqual(kept.discoveredAgents.map(\.shortModel), ["Gemini 7d", "3rd-party 7d", "Gemini"])
-        XCTAssertEqual(kept.discoveredAgents.map(\.id), old.map(\.id))
-        XCTAssertEqual(kept.discoveredAgents.map(\.enabled), [false, false, false])
-        XCTAssertEqual(kept.discoveredAgents.map(\.account), old.map(\.account))
-        XCTAssertEqual(kept.snapshots, previous.snapshots)
+        XCTAssertEqual(kept.discoveredAgents.map(\.shortModel), ["Gemini"])
+        XCTAssertEqual(kept.discoveredAgents.map(\.id), [old[2].id])
+        XCTAssertEqual(kept.discoveredAgents.map(\.enabled), [false])
+        XCTAssertEqual(kept.discoveredAgents.map(\.account), [current])
+        XCTAssertEqual(kept.snapshots, previous.snapshots.filter { $0.agentId == old[2].id })
     }
 
     private func summary(extraBucket: String = "") throws -> ProviderQuota {

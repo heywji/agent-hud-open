@@ -22,6 +22,8 @@ public final class PermissionRequests {
     /// A request left to the client's own dialog stays hidden until the client settles it.
     @ObservationIgnored private var dismissedNative: [String: PermissionHooks.Source] = [:]
     @ObservationIgnored private var nativeAnswers: [String: (source: PermissionHooks.Source, task: Task<Void, Never>)] = [:]
+    /// The demo requests a script has brought in and not yet taken back, answered on the HUD or not.
+    @ObservationIgnored private var demoShown: Set<String> = []
     /// How long a request waits for an answer before it goes back to the client's own prompt. The client's hook
     /// timeout stays far longer, as the ceiling for a HUD that stopped answering altogether; letting go here instead
     /// means a new value applies at once, to requests already waiting too, without rewriting any client's settings.
@@ -209,5 +211,16 @@ public final class PermissionRequests {
     /// on any client's behalf.
     public func seedDemo(now: Date = Date()) {
         pending = DemoData.permissionRequests(now: now)
+    }
+
+    /// Shows exactly these of the demo's requests, for a script that decides when each arrives and leaves. One the
+    /// user answered on the HUD stays answered: it is not brought back while the script still lists it.
+    public func showDemo(_ waiting: [(id: String, at: Date)]) {
+        let listed = Set(waiting.map(\.id))
+        pending.removeAll { !listed.contains($0.id) }
+        demoShown.formIntersection(listed)
+        for request in waiting where demoShown.insert(request.id).inserted {
+            if let made = DemoData.permissionRequest(request.id, at: request.at) { pending.append(made) }
+        }
     }
 }

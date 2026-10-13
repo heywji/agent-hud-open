@@ -26,11 +26,20 @@ def main():
     read_usage.restype = ctypes.c_int
     buffer = ctypes.create_string_buffer(4096)
 
+    # The kernel counts CPU time in its own clock's ticks: a nanosecond each on Intel, 125/3 of one on Apple silicon.
+    class Timebase(ctypes.Structure):
+        _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+
+    timebase = Timebase()
+    if ctypes.CDLL("/usr/lib/libSystem.dylib").mach_timebase_info(ctypes.byref(timebase)) != 0 or timebase.denom == 0:
+        parser.exit(1, "Cannot read the clock's timebase\n")
+    tick = timebase.numer / timebase.denom / 1e9
+
     def cpu_time():
         if read_usage(args.pid, 2, ctypes.byref(buffer)) != 0:
             raise OSError(ctypes.get_errno(), "Cannot read the process; it may have exited")
-        # rusage_info_v2 begins with a 16-byte UUID, then user/system CPU time in nanoseconds.
-        return sum(struct.unpack_from("QQ", buffer.raw, 16)) / 1e9
+        # rusage_info_v2 begins with a 16-byte UUID, then user and system CPU time in the clock's ticks.
+        return sum(struct.unpack_from("QQ", buffer.raw, 16)) * tick
 
     try:
         started = stamp = time.monotonic()

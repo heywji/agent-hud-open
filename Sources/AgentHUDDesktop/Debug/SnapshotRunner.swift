@@ -12,14 +12,13 @@ public enum SnapshotRunner {
         // Independent demo stores so snapshots always show the design's data, whatever the user configured.
         let defaults = UserDefaults(suiteName: "app.agenthud.open.snapshot")!
         defaults.removePersistentDomain(forName: "app.agenthud.open.snapshot")
+        // The language first: Codex's windows are worded in it when the sample's rows are made.
+        if let language { L10n.setLanguage(language) }
         let settings = SettingsStore(defaults: defaults, defaultAgents: DemoData.agents)
-        if let language = language {
-            settings.update { $0.language = language }
-            L10n.setLanguage(language)
-        }
-        let store = UsageStore(provider: DemoUsageProvider(), settings: settings)
+        if let language { settings.update { $0.language = language } }
+        let store = demoStore(settings)
         store.sampleTurnCalls = { DemoData.turnCalls(session: $0.id, turn: $1) }
-        store.replace(report: DemoUsageProvider.report(agents: settings.agents, historyHours: UsageStore.historyHours, now: Date()))
+        store.replace(report: DemoUsageProvider.report(agents: settings.agents, historyHours: UsageStore.historyHours, now: DemoClock.now))
 
         let folder = URL(fileURLWithPath: directory, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -37,7 +36,7 @@ public enum SnapshotRunner {
         save("alert-resetCredits-inline", IslandScene(store: store, settings: settings, open: true, light: false, alert: grant), folder: folder, scheme: .dark)
 
         for vendor in ["Claude", "Codex", "DeepSeek"] {
-            let now = Date()
+            let now = DemoClock.now
             let completion = SessionCompletion(sessionID: "snapshot", vendor: vendor, turnID: "preview",
                 task: L10n.text("自动更新检查", "Automatic update checks"),
                 model: ["Claude": "Fable 5.1", "Codex": "gpt-6.1-sol"][vendor] ?? "deepseek-v4-flash", startedAt: now.addingTimeInterval(-83), completedAt: now,
@@ -85,7 +84,7 @@ public enum SnapshotRunner {
         let reply = IslandAlert.completion(SessionCompletion(
             sessionID: "snapshot", vendor: "Codex", turnID: "shared-panel",
             task: L10n.text("修复会话跳转", "Fix session navigation"), model: "gpt-6.1-sol",
-            startedAt: Date().addingTimeInterval(-60), completedAt: Date(),
+            startedAt: DemoClock.now.addingTimeInterval(-60), completedAt: DemoClock.now,
             message: L10n.text("标题返回 agent，token 数字打开会话用量。", "Titles return to the agent; token counts open session usage."),
             navigationTarget: .codexThread(id: "00000000-0000-0000-0000-000000000001")))
         let sessionEvents: [IslandAlert] = [.permission(waiting[0]), reply]
@@ -144,6 +143,14 @@ public enum SnapshotRunner {
             }
             settings.update { $0 = saved }
         }
+        // The Simple panel: rings and numbers on and off, at several sizes and strokes, along an edge and down a side.
+        save("simple-meter", SimpleMeterSheetScene(), folder: folder, scheme: .dark)
+        // Every mark as its bot: midway through the morph, at work, asking, smiling, and resting in an alert.
+        save("bots-morph", BotSheetScene(phase: .working, seconds: 0.17), folder: folder, scheme: .dark)
+        save("bots-working", BotSheetScene(phase: .working), folder: folder, scheme: .dark)
+        save("bots-asking", BotSheetScene(phase: .asking), folder: folder, scheme: .dark)
+        save("bots-done", BotSheetScene(phase: .done, seconds: 0.9), folder: folder, scheme: .dark)
+        save("bots-resting", BotSheetScene(phase: .idle, seconds: 2), folder: folder, scheme: .dark)
         // The Display pane with this machine's screen put in logo mode, to check the preview against the HUD.
         if let main = NSScreen.main {
             let key = ScreenIdentity.key(for: main)
@@ -151,6 +158,8 @@ public enum SnapshotRunner {
             settings.update { $0.glowStyle = .dots; $0.glowEffect = .breathe
                               $0.screens[key] = ScreenPlacement(mode: .logos) }
             save("settings-display-logos-dark", SettingsView(settings: settings, store: store, initialTab: .display).frame(width: SettingsWindowLayout.size.width, height: SettingsWindowLayout.size.height), folder: folder, scheme: .dark)
+            settings.update { $0.screens[key] = ScreenPlacement(mode: .simple) }
+            save("simple-settings-display-dark", SettingsView(settings: settings, store: store, initialTab: .display).frame(width: SettingsWindowLayout.size.width, height: SettingsWindowLayout.size.height), folder: folder, scheme: .dark)
             settings.update { $0.screens[key] = ScreenPlacement(mode: .logos, logoSize: 36) }
             save("settings-display-logos-large-dark", SettingsView(settings: settings, store: store, initialTab: .display).frame(width: SettingsWindowLayout.size.width, height: SettingsWindowLayout.size.height), folder: folder, scheme: .dark)
             settings.update { $0.screens[key] = saved }
@@ -164,8 +173,8 @@ public enum SnapshotRunner {
         if let codex = settings.agents.first(where: { $0.vendor == "Codex" }) {
             let saved = settings.settings
             settings.update { $0.showIslandQuota = false; $0.showIslandTokens = false; $0.showIslandSessions = true }
-            let sessions = UsageStore(provider: DemoUsageProvider(), settings: settings)
-            let now = Date()
+            let sessions = demoStore(settings)
+            let now = DemoClock.now
             sessions.replace(report: UsageReport(generatedAt: now, snapshots: [], sessions: [
                 LiveSession(id: "snapshot-native", agentId: codex.id,
                             task: L10n.text("修复会话跳转", "Fix session navigation"), terminal: "app",
@@ -195,6 +204,7 @@ public enum SnapshotRunner {
             save("settings-\(tab.slug)-small-dark", SettingsView(settings: settings, store: store, initialTab: tab).frame(width: SettingsWindowLayout.minimum.width, height: SettingsWindowLayout.minimum.height), folder: folder, scheme: .dark)
         }
         saveAgentSettings(settings: settings, store: store, folder: folder)
+        saveGrokQuota(settings: settings, store: store, folder: folder)
         save("settings-display-bottom-dark", SettingsView(settings: settings, store: store, initialTab: .display).frame(width: SettingsWindowLayout.size.width, height: SettingsWindowLayout.size.height), folder: folder, scheme: .dark, scrollToBottom: true)
         save("settings-display-small-bottom-dark", SettingsView(settings: settings, store: store, initialTab: .display).frame(width: SettingsWindowLayout.minimum.width, height: SettingsWindowLayout.minimum.height), folder: folder, scheme: .dark, scrollToBottom: true)
         let sampleWidth = SettingsWindowLayout.size.width - SettingsWindowLayout.sidebarWidth - 1
@@ -242,16 +252,9 @@ public enum SnapshotRunner {
         store.statsTab = .tokens
         let dashboardAgents = settings.agents
         settings.updateAgents { $0.filter { ["Claude", "Codex", "DeepSeek"].contains($0.vendor) } }
-        let dashboardStore = UsageStore(provider: DemoUsageProvider(), settings: settings)
-        let dashboardReport = DemoUsageProvider.report(agents: settings.agents, historyHours: UsageStore.historyHours, now: Date())
-        dashboardStore.replace(report: UsageReport(generatedAt: dashboardReport.generatedAt,
-            snapshots: dashboardReport.snapshots, sessions: dashboardReport.sessions, consumers: dashboardReport.consumers,
-            usage: dashboardReport.usage,
-            insightsByAgent: Dictionary(uniqueKeysWithValues: dashboardReport.snapshots.map { ($0.agentId, DemoData.insights(now: dashboardReport.generatedAt)) }),
-            subscriptions: dashboardReport.subscriptions,
-            billing: [DemoData.deepSeekBilling(now: dashboardReport.generatedAt)],
-            sessionUsage: dashboardReport.sessionUsage, periods: dashboardReport.periods))
-        // DeepSeek is off in Settings; picking it shows an API account's card.
+        let dashboardStore = demoStore(settings)
+        let dashboardReport = DemoUsageProvider.report(agents: settings.agents, historyHours: UsageStore.historyHours, now: DemoClock.now)
+        dashboardStore.replace(report: dashboardReport)
         dashboardStore.pickedAgents = ["Claude", "Codex", "DeepSeek"]
         save("stats-dashboard-dark", StatsView(store: dashboardStore).frame(width: 960, height: 900), folder: folder, scheme: .dark)
         save("stats-dashboard-light", StatsView(store: dashboardStore).frame(width: 760, height: 700), folder: folder, scheme: .light)
@@ -268,10 +271,10 @@ public enum SnapshotRunner {
         save("stats-all-tokens-light", StatsView(store: store, scrollable: false).frame(width: 760), folder: folder, scheme: .light)
         store.tokenDimensions = .fresh
         let heatmapModels: [(String, String, Int)] = [
-            ("Claude", "Fable 5.1", 2_480_112), ("Claude", "Opus 5", 1_150_320),
-            ("Claude", "Opus 4.8", 824_521), ("Claude", "Fable 5", 390_064),
-            ("Codex", "codex-auto-review", 72_150), ("Codex", "gpt-5.5", 10_890),
-            ("Codex", "gpt-5.6-sol", 940), ("Codex", "gpt-6-astra", 310),
+            ("Claude", "Fable 5.1", 2_480_112), ("Claude", "Opus 5.5", 1_150_320),
+            ("Claude", "Sonnet 5.5", 824_521), ("Claude", "Haiku 4.5", 390_064),
+            ("Codex", "codex-auto-review", 72_150), ("Codex", "gpt-6-astra", 10_890),
+            ("Codex", "gpt-6.1-sol", 940), ("Codex", "gpt-6-luna", 310),
             ("DeepSeek", "deepseek-v4-flash", 1),
         ]
         let heatmapConsumers = heatmapModels.map { AgentDescriptor(id: $0.1, vendor: $0.0, model: $0.1, source: "Snapshot", enabled: true) }
@@ -333,8 +336,8 @@ public enum SnapshotRunner {
             $0.showIslandTokens = false; $0.showIslandSessions = false
             $0.glowRange = Settings().glowRange; $0.glowBlur = Settings().glowBlur
         }
-        let resetNow = Date()
-        let loadingStore = UsageStore(provider: DemoUsageProvider(), settings: settings)
+        let resetNow = DemoClock.now
+        let loadingStore = demoStore(settings)
         save("island-loading-quota", IslandScene(store: loadingStore, settings: settings, open: true, light: false), folder: folder, scheme: .dark)
         settings.update { $0.showResetCountdown = false }
         save("island-loading-no-reset", IslandScene(store: loadingStore, settings: settings, open: true, light: false), folder: folder, scheme: .dark)
@@ -455,6 +458,47 @@ public enum SnapshotRunner {
             .frame(width: SettingsWindowLayout.size.width, height: SettingsWindowLayout.size.height), folder: folder, scheme: .dark)
     }
 
+    /// Missing subscription values and wallet zeros stay distinct from a valid native quota and spending budget.
+    private static func saveGrokQuota(settings: SettingsStore, store: UsageStore, folder: URL) {
+        if let prefix = ProcessInfo.processInfo.environment["AGENTHUD_SNAPSHOT_PREFIX"],
+           !"quota-grok".hasPrefix(prefix) && !prefix.hasPrefix("quota-grok") { return }
+        let originalAgents = settings.agents, preferences = settings.settings, originalReport = store.report
+        defer {
+            settings.updateAgents { _ in originalAgents }
+            settings.update { $0 = preferences }
+            if let originalReport { store.replace(report: originalReport) }
+        }
+        let now = DemoClock.now, nativeAt = now.addingTimeInterval(-3600), walletAt = now.addingTimeInterval(-120)
+        let account = ProviderAccount.identified(provider: "Grok", user: "snapshot-grok", workspace: nil)!
+        let weekly = AgentDescriptor(id: account.windowID("grok"), vendor: "Grok", model: L10n.text("每周用量额度", "Weekly usage limit"),
+            shortModel: WindowNames.Period.week.shortName, source: L10n.sourceAdditionalUsage, enabled: true, account: account)
+        let extra = AgentDescriptor(id: account.windowID("grok:extra"), vendor: "Grok", model: L10n.text("额外用量", "Extra usage"),
+            shortModel: L10n.text("额外用量", "Extra"), source: L10n.sourceAdditionalUsage, enabled: true, account: account)
+        let reset = now.addingTimeInterval(4 * 86400)
+        settings.update { $0.showIslandQuota = true; $0.showIslandTokens = false; $0.showIslandSessions = false; $0.showResetCountdown = true }
+        settings.updateAgents { _ in [weekly] }
+        store.replace(report: UsageReport(generatedAt: now,
+            snapshots: [.init(agentId: weekly.id, remainingPct: nil, resetAt: reset, windowDuration: TimeInterval(7 * 86400), updatedAt: now)],
+            sessions: [], discoveredAgents: [weekly],
+            sourceNotices: ["Grok": L10n.text("Grok 已连接，但服务未返回已用额度", "Grok is connected, but used credits were not reported")],
+            quotaNotices: [:], readingIssues: [:], accounts: ["Grok": [
+                .init(account: account, client: "Grok CLI", label: "me@example.com", plan: "SuperGrok", observedAt: now,
+                    wallets: [.init(kind: .prepaid, balance: 0, observedAt: now), .init(kind: .onDemand, used: 0, limit: 0, observedAt: now)]),
+            ]]))
+        save("quota-grok-unknown-zero-wallets", IslandScene(store: store, settings: settings, open: true, light: false), folder: folder, scheme: .dark)
+        settings.updateAgents { _ in [weekly, extra] }
+        store.replace(report: UsageReport(generatedAt: now, snapshots: [
+            .init(agentId: weekly.id, remainingPct: 99.329611, resetAt: reset, windowDuration: TimeInterval(7 * 86400), updatedAt: nativeAt),
+            .init(agentId: extra.id, remainingPct: 75, resetAt: reset, windowDuration: TimeInterval(7 * 86400), updatedAt: walletAt),
+        ], sessions: [], discoveredAgents: [weekly, extra], quotaNotices: [:], readingIssues: [:], accounts: ["Grok": [
+            .init(account: account, client: "Grok Bot", label: "me@example.com", plan: "SuperGrok", observedAt: nativeAt,
+                wallets: [.init(kind: .prepaid, balance: Decimal(string: "12.50"), observedAt: walletAt),
+                          .init(kind: .onDemand, used: Decimal(string: "2.50"), limit: 10, observedAt: walletAt)],
+                sourceInfo: L10n.text("额度来自 Grok Bot 缓存；在 Bot 中刷新可更新读数", "Quota from Grok Bot cache; refresh in Bot to update")),
+        ]]))
+        save("quota-grok-native-wallets", IslandScene(store: store, settings: settings, open: true, light: false), folder: folder, scheme: .dark)
+    }
+
     /// A question half answered: the first of two, one option picked, so the card shows what choosing looks like.
     private static func snapshotQuestion() -> PermissionRequest {
         let questions = [
@@ -478,12 +522,12 @@ public enum SnapshotRunner {
 
     /// Many recorded models: the folded filter, a model subset and the HUD's ten-label limit use the same full data.
     private static func saveTokenCharts(settings: SettingsStore, folder: URL) {
-        let now = Date()
+        let now = DemoClock.now
         let models = [
-            ("Claude", "claude-opus-4-5"), ("Claude", "claude-sonnet-4-5"), ("Claude", "claude-haiku-4-5"),
-            ("Codex", "gpt-5"), ("Codex", "gpt-5.4"), ("Codex", "gpt-5.5"), ("Codex", "gpt-5.6-sol"), ("Codex", "gpt-6.1-sol"),
-            ("Antigravity", "gemini-2.5-pro"), ("Cursor", "composer-1"), ("OpenCode", "muse-spark-1.3-contributor"),
-            ("Pi", "gpt-5"), ("DeepSeek", "deepseek-v4-flash"),
+            ("Claude", "claude-opus-5-5"), ("Claude", "claude-sonnet-5-5"), ("Claude", "claude-haiku-4-5"),
+            ("Codex", "gpt-6-luna"), ("Codex", "gpt-6-sol"), ("Codex", "gpt-6-astra"), ("Codex", "gpt-5.6-sol"), ("Codex", "gpt-6.1-sol"),
+            ("Antigravity", "gemini-3.8-flash"), ("Cursor", "composer-1"), ("OpenCode", "muse-spark-1.3-contributor"),
+            ("Pi", "gpt-6.1-sol"), ("DeepSeek", "deepseek-v4-flash"),
         ]
         let consumers = models.map { vendor, model in
             let id = vendor.lowercased() + "-model:" + model
@@ -494,7 +538,7 @@ public enum SnapshotRunner {
                         tokensIn: (consumers.count - index) * 18_000, tokensOut: (consumers.count - index) * 2000,
                         cacheReadTokens: (index + 1) * 5000)
         }
-        let store = UsageStore(provider: DemoUsageProvider(), settings: settings)
+        let store = demoStore(settings)
         store.replace(report: UsageReport(generatedAt: now, snapshots: [], sessions: [], consumers: consumers, usage: usage))
         let picked = TokenModelFilter(consumerIDs: [consumers[0].id, consumers[12].id])
         for scheme in [ColorScheme.dark, .light] {
@@ -560,8 +604,8 @@ public enum SnapshotRunner {
             SourceStatus(id: $0.rawValue, name: $0.name, detail: $0.detail, state: .notDetected)
         }
         let sources = configuredSources + otherSources.filter { source in !configuredSources.contains { $0.id == source.id } }
-        store.replace(report: UsageReport(generatedAt: Date(), snapshots: [], sessions: [],
-            subscriptions: ["kimi-plan": "Allegretto"], billing: [DemoData.deepSeekBilling(now: Date())], services: [
+        store.replace(report: UsageReport(generatedAt: DemoClock.now, snapshots: [], sessions: [],
+            subscriptions: ["kimi-plan": "Allegretto"], billing: [DemoData.deepSeekBilling(now: DemoClock.now)], services: [
                 .init(client: "OpenCode", provider: "Anthropic", product: .api),
                 .init(client: "OpenCode", provider: "OpenAI", product: .api),
                 .init(client: "OpenCode", provider: "Kimi", product: .plan, accountID: "kimi-plan"),
@@ -587,7 +631,7 @@ public enum SnapshotRunner {
     }
 
     private static func saveAntigravitySettings(settings: SettingsStore, store: UsageStore, sources: [SourceStatus], folder: URL) {
-        let now = Date()
+        let now = DemoClock.now
         let current = ProviderAccount.identified(provider: "Antigravity", user: "work@example.com", workspace: nil)!
         let previous = ProviderAccount.identified(provider: "Antigravity", user: "personal@example.com", workspace: nil)!
         func row(_ account: ProviderAccount, _ key: String, _ short: String, _ name: String) -> AgentDescriptor {
@@ -680,6 +724,11 @@ public enum SnapshotRunner {
         }
     }
 
+    /// A store of sample data on the demo's clock, the one every report here is built on.
+    private static func demoStore(_ settings: SettingsStore) -> UsageStore {
+        UsageStore(provider: DemoUsageProvider(), settings: settings, clock: { DemoClock.now })
+    }
+
     private static func save<V: View>(_ name: String, _ view: V, folder: URL, scheme: ColorScheme,
                                      scrollToBottom: Bool = false, scrollOffset: CGFloat? = nil) {
         // Limit visual rechecks to the changed surface, e.g. AGENTHUD_SNAPSHOT_PREFIX=settings-.
@@ -737,7 +786,12 @@ public enum SnapshotRunner {
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
         ) else { return }
         rep.size = size
-        view.cacheDisplay(in: view.bounds, to: rep)
+        // The software renderer draws a capsule's continuous outline with a line past each tip; see `HUDRecorder`.
+        if let layer = view.layer {
+            HUDRecorder.withDrawableBorders(under: layer) { view.cacheDisplay(in: view.bounds, to: rep) }
+        } else {
+            view.cacheDisplay(in: view.bounds, to: rep)
+        }
 
         guard let data = rep.representation(using: .png, properties: [:]) else { return }
         let url = folder.appendingPathComponent("\(name).png")

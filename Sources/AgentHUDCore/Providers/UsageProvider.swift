@@ -40,10 +40,11 @@ public protocol UsageProvider: Sendable {
     /// interval. The collector reads a source again when one of its times passes; a source without times is left alone.
     func sourceChecks() async -> [String: [Date]]
 
-    /// When each source's account steps are next worth running, given when each last ran. A quota window moves only
-    /// while work runs, so a source is read while its work runs and left alone while it is quiet. A source this
-    /// provider does not name runs every account interval, and `Date.distantFuture` asks for no reading at all.
-    func accountChecks(since: [String: Date], now: Date) async -> [String: Date]
+    /// When each source's account steps are next worth running, given when each last ran and the spread drawn for
+    /// that run, which a scheduled reading waits past its time. A quota window moves only while work runs, so a source
+    /// is read while its work runs and left alone while it is quiet. A source this provider does not name runs every
+    /// account interval, and `Date.distantFuture` asks for no reading at all.
+    func accountChecks(since: [String: Date], spread: [String: TimeInterval], now: Date) async -> [String: Date]
 
     /// Whether this provider can tell work from quiet on this Mac. A provider whose usage appears only in the account
     /// answer cannot, so its readings keep the account interval however quiet it looks.
@@ -80,7 +81,7 @@ extension UsageProvider {
     }
     public func fileChanges(_ paths: Set<String>?) async {}
     public func sourceChecks() async -> [String: [Date]] { [:] }
-    public func accountChecks(since: [String: Date], now: Date) async -> [String: Date] { [:] }
+    public func accountChecks(since: [String: Date], spread: [String: TimeInterval], now: Date) async -> [String: Date] { [:] }
     public var seesLocalWork: Bool { true }
 }
 
@@ -89,10 +90,15 @@ public enum UsageRefresh {
     /// The fallback read of every local source, and the quota and balance readings of a source that cannot tell its
     /// own work from quiet, or whose windows say nothing about when they change.
     public static let accountInterval: TimeInterval = 300
-    /// Quota and balance readings while a turn is running, which is when the windows move fastest.
-    public static let runningAccountInterval: TimeInterval = 60
+    /// Quota and balance readings while a turn is running, which is when the windows move fastest. With the spread
+    /// that is one reading every 150 to 210 s, in which a Claude Code 5-hour window rarely moves more than two points.
+    public static let runningAccountInterval: TimeInterval = 150
     /// Quota and balance readings while a session is live between turns.
-    public static let liveAccountInterval: TimeInterval = 180
+    public static let liveAccountInterval: TimeInterval = 300
+    /// A scheduled quota or balance reading waits a random time up to this long past the time it falls due, drawn
+    /// again after every reading. Windows reset at round times, so without it every copy of the application on an
+    /// account with the same reset would ask the service in the same second.
+    public static let accountSpread: TimeInterval = 60
     /// The collector never runs a source's account steps again sooner than this, whoever asks; only consent to read
     /// GitHub Copilot's quota, given or withdrawn, reads Copilot's sooner.
     public static let accountRequestSpacing: TimeInterval = 60

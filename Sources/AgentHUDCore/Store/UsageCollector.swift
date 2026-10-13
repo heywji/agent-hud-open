@@ -43,6 +43,8 @@ final class UsageCollector {
     private var accountSteps: [(source: String, run: AccountRefreshStep)] = []
     /// When each source's account steps last ran; a source that has never run them is due at once.
     private var accountRunAt: [String: Date] = [:]
+    /// How long past its time each source's next scheduled reading waits, drawn when its steps last ran.
+    private var accountSpread: [String: TimeInterval] = [:]
     /// Consent to read GitHub Copilot's quota, and a look at the numbers, read accounts at once instead of when work moves them.
     private var sweptWithCopilotQuota: Bool?
     private var forcesAccounts = false
@@ -60,6 +62,14 @@ final class UsageCollector {
     /// A failed read is tried again at this time.
     private var retryAt: Date?
     private var changes: FileChangeMonitor?
+    /// Each recent session log's modification time and size when it was last looked at. A client that keeps its log
+    /// open and appends to it, as Codex does, reaches the file watch late or not at all: a turn that started in a quiet
+    /// session went unseen until the fallback read. These few logs are therefore looked at on a schedule as well.
+    private var logSignatures: [String: String] = [:]
+    private var logsCheckedAt: Date?
+    /// How recently a session must have been active for its log to be looked at, and how many logs are.
+    static let logCheckRecency: TimeInterval = 24 * 3600
+    static let logCheckLimit = 64
     /// The provider's last report before the merge hook, numbered so a slower merge never replaces a newer one.
     private var local: (report: UsageReport, generation: Int)?
     private var generation = 0
@@ -97,7 +107,7 @@ final class UsageCollector {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(10))
                 guard let self, let store = self.store else { return }
-                store.now = Date()
+                store.now = store.clock()
                 self.confirmQuiet(at: store.now)
             }
         }
@@ -171,8 +181,8 @@ final class UsageCollector {
     /// Returns how long to wait for the next signal that is known in advance; file changes wake the loop sooner.
     private func collect(force: Bool) async -> TimeInterval {
         guard let store, store.isAccessAllowed, !isCollecting else { return UsageRefresh.pollInterval }
-        if let pausedUntil = store.pausedUntil, pausedUntil > Date() {
-            return min(pausedUntil.timeIntervalSinceNow, UsageRefresh.accountInterval)
+        if let pausedUntil = store.pausedUntil, pausedUntil > store.clock() {
+            return min(pausedUntil.timeIntervalSince(store.clock()), UsageRefresh.accountInterval)
         }
         store.pausedUntil = nil
         isCollecting = true
@@ -216,6 +226,7 @@ final class UsageCollector {
             repeat {
                 let step = accountSteps.removeFirst()
                 accountRunAt[step.source] = Date()
+                accountSpread[step.source] = .random(in: 0...UsageRefresh.accountSpread)
                 await step.run(hooks.historyHours())
                 if step.source.isEmpty { needsFetch = true } else { signalled.insert(step.source) }
             } while !accountSteps.isEmpty && !Task.isCancelled && Date().timeIntervalSince(stepsStarted) < UsageRefresh.accountStepBudget
@@ -241,6 +252,14 @@ final class UsageCollector {
                 needsFetch = true
             }
         }
+        if changes?.isWatching == true, logsCheckedAt.map({ date.timeIntervalSince($0) >= UsageRefresh.pollInterval }) ?? true {
+            logsCheckedAt = date
+            let grown = Self.changedLogs(recentLogs(at: date), known: &logSignatures)
+            if !grown.isEmpty {
+                await provider.fileChanges(grown)
+                signalled.formUnion(owners(of: grown))
+            }
+        }
         for source in polledSources where readAt[source].map({ date.timeIntervalSince($0) >= UsageRefresh.pollInterval }) ?? true {
             signalled.insert(source)
         }
@@ -248,6 +267,33 @@ final class UsageCollector {
             let since = readAt[source] ?? .distantPast
             if times.contains(where: { $0 > since && $0 <= date }) { signalled.insert(source) }
         }
+    }
+
+    /// The logs of the sessions most recently active, newest first: where a new turn is most likely to be written.
+    private func recentLogs(at date: Date) -> [String] {
+        let cutoff = date.addingTimeInterval(-Self.logCheckRecency)
+        let recent = (local?.report.sessions ?? []).compactMap { session -> (path: String, at: Date)? in
+            guard let path = session.transcriptPath else { return nil }
+            let at = session.lastActivityAt ?? session.endedAt ?? session.startedAt
+            return at >= cutoff ? (path, at) : nil
+        }
+        return recent.sorted { $0.at > $1.at }.prefix(Self.logCheckLimit).map(\.path)
+    }
+
+    /// The logs among `paths` whose modification time or size differs from what `known` holds, which then holds what
+    /// they are now. A log seen for the first time is only noted: the read that listed it has just read it.
+    static func changedLogs(_ paths: [String], known: inout [String: String]) -> Set<String> {
+        var changed: Set<String> = [], next: [String: String] = [:]
+        for path in paths {
+            // A new URL does not answer from values cached by an earlier look.
+            guard let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                  let modified = values.contentModificationDate, let size = values.fileSize else { continue }
+            let signature = "\(modified.timeIntervalSince1970):\(size)"
+            if let before = known[path], before != signature { changed.insert(path) }
+            next[path] = signature
+        }
+        known = next
+        return changed
     }
 
     /// Sources read on a schedule: those without directories, and every source while file changes cannot be watched.
@@ -275,14 +321,16 @@ final class UsageCollector {
         return owners
     }
 
-    /// When each source's account steps are next worth running: what the provider asks for, the account interval when
-    /// it names no time, and at once for a source that has never run them. No source runs twice within the request
-    /// spacing, so a provider that wants a reading sooner than it allows one is asked once the spacing has passed.
+    /// When each source's account steps are next worth running: what the provider asks for, the account interval and
+    /// the source's spread when it names no time, and at once for a source that has never run them. No source runs
+    /// twice within the request spacing, so a provider that wants a reading sooner than it allows one is asked once
+    /// the spacing has passed.
     private func accountDue(at now: Date) async -> [String: Date] {
-        let asked = await provider.accountChecks(since: accountRunAt, now: now)
+        let asked = await provider.accountChecks(since: accountRunAt, spread: accountSpread, now: now)
         return sources.reduce(into: [:]) { due, source in
             guard let last = accountRunAt[source.name] else { return due[source.name] = .distantPast }
-            due[source.name] = max(asked[source.name] ?? last.addingTimeInterval(UsageRefresh.accountInterval),
+            let interval = UsageRefresh.accountInterval + (accountSpread[source.name] ?? 0)
+            due[source.name] = max(asked[source.name] ?? last.addingTimeInterval(interval),
                                    last.addingTimeInterval(UsageRefresh.accountRequestSpacing))
         }
     }
@@ -305,6 +353,9 @@ final class UsageCollector {
         if store?.isIndexing == true { times.append((fetchedAt ?? now).addingTimeInterval(UsageRefresh.indexingInterval)) }
         if let retryAt { times.append(retryAt) }
         for source in polledSources { times.append((readAt[source] ?? now).addingTimeInterval(UsageRefresh.pollInterval)) }
+        if changes?.isWatching == true, !logSignatures.isEmpty {
+            times.append((logsCheckedAt ?? now).addingTimeInterval(UsageRefresh.pollInterval))
+        }
         for (_, dates) in await checks() { times += dates.filter { $0 > now } }
         let next = times.min() ?? now.addingTimeInterval(UsageRefresh.accountInterval)
         return max(0, next.timeIntervalSince(now))
@@ -341,7 +392,7 @@ final class UsageCollector {
             fetchedAt = date
             store.lastError = error.localizedDescription
         }
-        store.now = Date()
+        store.now = store.clock()
     }
 }
 
@@ -364,27 +415,29 @@ extension UsageReport {
     /// When an account reading of this source is next worth taking, counted from `since`, when its steps last ran.
     /// A window moves only while work runs, so a running turn is read often, a session between turns slowly, and work
     /// that finished after the last reading once more. An idle source's windows change only when they reset, and a
-    /// source that cannot see this Mac's work keeps the account interval.
-    func accountCheck(since: Date, now: Date, seesLocalWork: Bool) -> Date {
+    /// source that cannot see this Mac's work keeps the account interval. A reading that follows an interval or a reset
+    /// waits `spread` past it; the one for work that just finished does not wait.
+    func accountCheck(since: Date, now: Date, seesLocalWork: Bool, spread: TimeInterval = 0) -> Date {
         // A deadline remains due until an account request has actually run at or after it.
         // Comparing with `now` loses the scheduled refresh as soon as the deadline arrives.
         let reset = snapshots.filter { snapshot in
             discoveredAgents.first(where: { $0.id == snapshot.agentId }).map(isCurrent) ?? true
         }.compactMap(\.resetAt).filter { $0 > since }.min()
+        func after(_ interval: TimeInterval) -> Date { since.addingTimeInterval(interval + spread) }
         let regular: Date
         let stale = now.addingTimeInterval(-UsageRefresh.activeTurnFreshness)
         if turns.contains(where: { $0.state == .running && RecordCoding.date($0.observedAtMs) > stale }) {
-            regular = since.addingTimeInterval(UsageRefresh.runningAccountInterval)
+            regular = after(UsageRefresh.runningAccountInterval)
         } else if sessions.contains(where: { $0.isLive(at: now) }) {
-            regular = since.addingTimeInterval(UsageRefresh.liveAccountInterval)
+            regular = after(UsageRefresh.liveAccountInterval)
         } else if !seesLocalWork {
-            regular = since.addingTimeInterval(UsageRefresh.accountInterval)
+            regular = after(UsageRefresh.accountInterval)
         } else if sessions.contains(where: { ($0.endedAt ?? .distantPast) > since }) {
             regular = now
         } else {
             regular = reset == nil || snapshots.contains(where: { ($0.resetAt ?? .distantFuture) <= since })
-                ? since.addingTimeInterval(UsageRefresh.accountInterval) : .distantFuture
+                ? after(UsageRefresh.accountInterval) : .distantFuture
         }
-        return min(regular, reset ?? .distantFuture)
+        return min(regular, reset?.addingTimeInterval(spread) ?? .distantFuture)
     }
 }

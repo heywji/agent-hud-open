@@ -9,7 +9,7 @@ public struct AgentSettingsGroup: Identifiable, Equatable, Sendable {
     public let agents: [AgentDescriptor]
     public let plans: [String]
     public let apiProviders: [String]
-    /// Accounts the client has been signed in to, current first, including plan pools.
+    /// Accounts the clients are currently signed in to, including plan pools.
     public let accounts: [AccountObservation]
     /// API balance identities remain available here even while their readings are hidden.
     public let billingAccounts: [APIBilling]
@@ -76,8 +76,8 @@ public struct AgentSettingsGroup: Identifiable, Equatable, Sendable {
             let clients = family.filter { $0.name != id }
             let windows = existing.first { $0.id == id }?.agents ?? []
             let services = (report?.services ?? []).filter { $0.client == id }
-            // Observations retain client-home history; display one summary per account, as quota rows do.
-            let accountIDs = Set((report?.accounts?[id] ?? []).map(\.account.id))
+            // Older restart copies include former accounts; only current identities have settings and quota rows.
+            let accountIDs = Set((report?.accounts?[id] ?? []).filter(\.isCurrent).map(\.account.id))
             let accounts = accountIDs.compactMap { report?.observation(accountID: $0) }
                 .sorted { ($0.isCurrent ? 1 : 0, $0.observedAt) > ($1.isCurrent ? 1 : 0, $1.observedAt) }
             var plans = accounts.isEmpty ? source?.planLabel.map { [$0] } ?? [] : []

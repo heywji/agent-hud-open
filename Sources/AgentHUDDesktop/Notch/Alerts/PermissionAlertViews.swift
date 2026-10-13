@@ -39,25 +39,35 @@ struct PermissionAlertCompactView: View {
     let height: CGFloat
     /// Every request waiting for this user, on any screen. One is the card itself and needs no number.
     var waiting = 1
+    @Environment(\.stripScale) private var scale
+    @Environment(\.compactWings) private var wings
+
+    /// What a request's reminder says beside its project: a question, a plan, or a call waiting to be allowed.
+    static func status(of request: PermissionRequest) -> String {
+        request.isQuestion ? L10n.text("待回答", "Question")
+            : request.isPlan ? L10n.text("计划待审", "Plan") : L10n.text("待批准", "Waiting")
+    }
+
+    /// A length at the scale of the dock this reminder grows from.
+    private func s(_ value: CGFloat) -> CGFloat { (value * scale).rounded() }
 
     var body: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 8) {
-                AgentLogo(vendor: request.vendor, size: 17)
+            HStack(spacing: s(8)) {
+                BotMark(vendor: request.vendor, size: s(17), phase: .asking)
                 Text(request.project ?? request.vendor)
-                    .font(.ui(13, .semibold)).lineLimit(1).minimumScaleFactor(0.78)
-            }.frame(width: IslandController.alertWingWidth, alignment: .leading)
-            Color.clear.frame(width: cameraWidth)
-            HStack(spacing: 7) {
-                PermissionSymbol(requestID: request.id)
-                Text(request.isQuestion ? L10n.text("待回答", "Question")
-                     : request.isPlan ? L10n.text("计划待审", "Plan") : L10n.text("待批准", "Waiting"))
-                    .font(.ui(12, .medium))
-                WaitingCount(waiting: waiting)
-            }.frame(width: IslandController.alertWingWidth, alignment: .trailing)
+                    .font(.ui(s(13), .semibold)).lineLimit(1).minimumScaleFactor(0.78)
+            }.frame(width: wings?.leading ?? s(IslandController.alertWingWidth), alignment: .leading)
+            Color.clear.frame(width: wings?.gap ?? cameraWidth)
+            HStack(spacing: s(7)) {
+                PermissionSymbol(requestID: request.id, size: s(14))
+                Text(Self.status(of: request))
+                    .font(.ui(s(12), .medium))
+                WaitingCount(waiting: waiting, scale: scale)
+            }.frame(width: wings?.trailing ?? s(IslandController.alertWingWidth), alignment: .trailing)
         }
         .foregroundStyle(PermissionColor.text)
-        .padding(.horizontal, IslandController.alertSidePadding).frame(height: height)
+        .padding(.horizontal, wings?.padding ?? s(IslandController.alertSidePadding)).frame(height: height)
         .accessibilityIdentifier("island-alert-permissionRequest")
         .accessibilityLabel("\(request.vendor) · \(request.isQuestion ? L10n.text("在问你问题", "Asks a question") : request.isPlan ? L10n.text("有计划待审", "Has a plan to review") : L10n.text("等待批准", "Needs approval")) · \(request.summary)"
                             + (waiting > 1 ? " · " + L10n.text("共 \(waiting) 个", "\(waiting) waiting") : ""))
@@ -292,7 +302,7 @@ struct PermissionAlertInlineView: View {
                         }
                         // A command without a description of its own is its own summary, and it is shown in full below.
                         if request.summary != subject {
-                            Text(request.summary).font(.ui(10)).foregroundStyle(PermissionColor.secondary).lineLimit(1)
+                            Text(request.summary).font(.ui(11)).foregroundStyle(PermissionColor.secondary).lineLimit(1)
                         }
                     }
                     Spacer(minLength: 10)
@@ -341,12 +351,13 @@ private struct PlanNotice: View {
 /// How many requests are waiting in all, shown only when this card is not the whole story.
 private struct WaitingCount: View {
     let waiting: Int
+    var scale: CGFloat = 1
 
     var body: some View {
         if waiting > 1 {
             Text("×\(waiting)")
-                .font(.tabular(10, .semibold)).foregroundStyle(PermissionColor.secondary)
-                .padding(.horizontal, 5).padding(.vertical, 2)
+                .font(.tabular((10 * scale).rounded(), .semibold)).foregroundStyle(PermissionColor.secondary)
+                .padding(.horizontal, (5 * scale).rounded()).padding(.vertical, (2 * scale).rounded())
                 .background(PermissionColor.highlight, in: RoundedRectangle(cornerRadius: 4))
                 .accessibilityLabel(L10n.text("共 \(waiting) 个待批准", "\(waiting) requests waiting"))
         }
@@ -376,7 +387,7 @@ private struct PermissionButtons: View {
                        fill: .clear, stroke: PermissionColor.allow.opacity(0.4),
                        foreground: PermissionColor.allow) { onDecide(.allowAlways(always)) }
             }
-            button(L10n.text("批准一次", "Allow once"), symbol: "checkmark", identifier: "island-permission-approve",
+            button(request.allowLabel, symbol: "checkmark", identifier: "island-permission-approve",
                    fill: PermissionColor.allow, stroke: .clear, foreground: .black) { onDecide(.allow) }
         }
     }
@@ -403,11 +414,12 @@ private struct PermissionButtons: View {
 /// holds and news that has been read.
 private struct PermissionSymbol: View {
     let requestID: String
+    var size: CGFloat = 14
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Image(systemName: "hand.raised.fill")
-            .font(.system(size: 14, weight: .semibold)).foregroundStyle(PermissionColor.signal)
+            .font(.system(size: size, weight: .semibold)).foregroundStyle(PermissionColor.signal)
             .symbolEffect(.pulse, options: .repeating, value: requestID)
             .symbolEffectsRemoved(reduceMotion)
     }

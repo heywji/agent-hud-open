@@ -81,10 +81,10 @@ final class ReportViewTests: XCTestCase {
         let view = ReportView(report: report, agents: agents, settings: Settings(), now: now)
         let sections = view.accountSections(view.rows)
 
-        XCTAssertEqual(sections.map { view.accountNotice(for: $0) }, [warning, nil])
-        XCTAssertEqual(view.rows.map(\.usedPct), [0, 0], "a local notice keeps both accounts' quota readings")
-        XCTAssertEqual(view.rows.map(\.level), [.ok, nil], "only the current account's quota contributes a status")
-        XCTAssertEqual(view.assessment(of: try XCTUnwrap(sections[1].account)).accountLabel(now: now), "Last read 7m ago")
+        XCTAssertEqual(sections.map { view.accountNotice(for: $0) }, [warning])
+        XCTAssertEqual(view.rows.map(\.usedPct), [0], "a local notice keeps the current account's quota reading")
+        XCTAssertEqual(view.rows.map(\.level), [.ok])
+        XCTAssertEqual(sections.compactMap(\.account).map(\.account), [accounts[0]], "former accounts do not create quota sections")
     }
 
     func testAccountNoticesKeepClientHomeAndAccountScope() {
@@ -116,7 +116,7 @@ final class ReportViewTests: XCTestCase {
 
         XCTAssertEqual(view.accountSections(view.rows).map { view.accountNotice(for: $0) }, [
             "First home logs could not be read", "Some local sessions could not be read",
-            "Old home read failed · Logs incomplete", "Account read failed", "Pool read failed", nil,
+            "Pool read failed", nil,
         ])
     }
 

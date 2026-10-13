@@ -26,8 +26,8 @@ public actor RetainedUsageProvider: UsageProvider {
     public nonisolated var sources: [UsageSource] { provider.sources }
     public func fileChanges(_ paths: Set<String>?) async { await provider.fileChanges(paths) }
     public func sourceChecks() async -> [String: [Date]] { await provider.sourceChecks() }
-    public func accountChecks(since: [String: Date], now: Date) async -> [String: Date] {
-        await provider.accountChecks(since: since, now: now)
+    public func accountChecks(since: [String: Date], spread: [String: TimeInterval], now: Date) async -> [String: Date] {
+        await provider.accountChecks(since: since, spread: spread, now: now)
     }
     public nonisolated var seesLocalWork: Bool { provider.seesLocalWork }
 
@@ -86,8 +86,8 @@ extension UsageReport {
         }
         let retiredPoolIDs = Set(previous.discoveredAgents.filter { !isActive($0) }.compactMap { $0.billingPool?.id })
         let cutoff = generatedAt.addingTimeInterval(-QuotaHistoryStore.retention)
-        // Only a provider's explicit, sound complete inventory retires omitted windows. Missing values in a present
-        // window keep their last reading, and a failed read or an account switched away keeps every last reading.
+        // Only a provider's explicit, sound complete inventory retires omitted windows. A window without a new snapshot
+        // keeps its last reading; a snapshot with an unknown value replaces it. Failed reads keep every last reading.
         let inventories = completeQuotaWindowInventories
         let accounts = mergedAccounts(from: previous, retiredPoolIDs: retiredPoolIDs, cutoff: cutoff)
         // Every row a provider reports is seen now; rows from a report that kept no times start their clock now.
@@ -174,16 +174,19 @@ extension UsageReport {
         return merged
     }
 
-    /// A provider's reported list replaces its current accounts; accounts it no longer reports become last readings.
+    /// A provider's reported list replaces its accounts. A client home whose identity read failed keeps its last current
+    /// account until it can confirm a replacement or sign-out; former accounts are never restored.
     /// A provider that did not report this poll keeps its previous inventory unchanged, and a forgotten provider has none.
     private func mergedAccounts(from previous: UsageReport, retiredPoolIDs: Set<String>, cutoff: Date) -> [String: [AccountObservation]]? {
         guard accounts != nil || previous.accounts != nil || forgottenAccountProviders != nil else { return nil }
         var merged = previous.accounts ?? [:]
         for (provider, current) in accounts ?? [:] {
-            let ids = Set(current.map(\.id)), aliases = Set(current.flatMap { $0.aliases ?? [] })
+            let current = current.filter(\.isCurrent)
+            let homes = Set(current.map(\.home)), aliases = Set(current.flatMap { $0.aliases ?? [] })
             merged[provider] = current + (previous.accounts?[provider] ?? []).filter {
-                !ids.contains($0.id) && !aliases.contains($0.account.id)
-            }.map { $0.with(isCurrent: false) }
+                $0.isCurrent && !homes.contains($0.home) && !aliases.contains($0.account.id)
+                    && !vendorStatus(ClientHome.sourceKey(provider: provider, home: $0.home)).isNormal
+            }
         }
         for provider in forgottenAccountProviders ?? [] {
             merged[provider] = []

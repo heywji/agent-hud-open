@@ -14,7 +14,7 @@ final class DockContactAnchorTests: XCTestCase {
         for edge in HUDEdge.allCases {
             let strip = NotchGeometry.stripRect(
                 queue: edge.isHorizontal ? CGSize(width: 216, height: 32) : CGSize(width: 32, height: 216),
-                frame: screen, menuBar: 32, placement: ScreenPlacement(mode: .logos, edge: edge))
+                frame: screen, placement: ScreenPlacement(mode: .logos, edge: edge))
             let geometry = NotchGeometry(screenFrame: screen, mode: .logos, edge: edge, hasNotch: false,
                                          rect: strip, cornerRadius: 10, backingScale: 2, menuBarHeight: 32)
             let closedFrame = geometry.islandFrame

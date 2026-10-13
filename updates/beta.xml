@@ -3,20 +3,20 @@
   <channel>
     <title>Agent HUD</title>
     <item>
-      <title>0.4.34</title>
-      <pubDate>Sat, 03 Oct 2026 22:59:29 +0800</pubDate>
-      <link>https://github.com/jazzenchen/agent-hud-open/releases/tag/v0.4.34-beta.4</link>
+      <title>0.4.39</title>
+      <pubDate>Fri, 09 Oct 2026 19:51:05 +0800</pubDate>
+      <link>https://github.com/jazzenchen/agent-hud-open/releases/tag/v0.4.39-beta.2</link>
       <sparkle:channel>beta</sparkle:channel>
-      <sparkle:minimumAutoupdateVersion>463</sparkle:minimumAutoupdateVersion>
-      <sparkle:version>463</sparkle:version>
-      <sparkle:shortVersionString>0.4.34-beta.4</sparkle:shortVersionString>
+      <sparkle:minimumAutoupdateVersion>481</sparkle:minimumAutoupdateVersion>
+      <sparkle:version>481</sparkle:version>
+      <sparkle:shortVersionString>0.4.39-beta.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <description sparkle:format="markdown"># Agent HUD 0.4.34-beta.4
+      <description sparkle:format="markdown"># Agent HUD 0.4.39-beta.2
 
 ## Compatibility
 
-**Requires Agent HUD for iPhone 1.4 or later** for iPhone and Apple Watch sync. Update the iPhone app before updating the Mac. Older iPhone versions cannot read this release's data.
+**Requires Agent HUD for iPhone 1.5 or later** for iPhone and Apple Watch sync. Update the iPhone app before updating the Mac. Older iPhone versions cannot read this release's data.
 
 [Get the iPhone app](https://apps.apple.com/app/id6812113619).
 
@@ -26,25 +26,33 @@ Requires an Apple Silicon Mac running macOS 14 or later.
 
 ## Changes
 
-- The New Version menu entry uses blue text while keeping the regular menu font.
+- Improves LAN snapshot updates by computing canonical record IDs once before sorting snapshots and replay batches. This removes repeated encoding from the sorting hot path.
+- Recognises personal SuperGrok accounts whose native Grok Bot usage records contain both a user principal and a team ID. The account can now display its confirmed weekly quota.
+- Leaves Codex automatic approval review to Codex. The HUD only handles a permission request when the matching turn explicitly uses a user reviewer.
+- Includes the LAN connection and cross-device sync fixes from the 0.4.39 release series.
+
+## Known issues
+
+- Grok prepaid and on-demand wallet amounts, including a zero-dollar wallet, are not yet displayed. The missing-quota placeholder also remains outstanding. [Issue #20](https://github.com/jazzenchen/agent-hud-open/issues/20) remains open; [PR #35](https://github.com/jazzenchen/agent-hud-open/pull/35) and [PR #38](https://github.com/jazzenchen/agent-hud-open/pull/38) address native usage reading and personal-account recognition.
+- Cross-device features require iPhone 1.5 or later. Use the corresponding TestFlight build while version 1.5 is awaiting App Store review.
 </description>
-      <enclosure url="https://github.com/jazzenchen/agent-hud-open/releases/download/v0.4.34-beta.4/Agent-HUD-0.4.34-beta.4-arm64.dmg" length="11502041" type="application/octet-stream" sparkle:edSignature="jJmltpoPJVqN2YfiEqqfcB30TaRjIN7Xn92vhv1A6CnirLW3oh+u9qmnDqkxshGxrplaoCZcSlRXaTRPWPtCDA==" />
+      <enclosure url="https://github.com/jazzenchen/agent-hud-open/releases/download/v0.4.39-beta.2/Agent-HUD-0.4.39-beta.2-arm64.dmg" length="12703441" type="application/octet-stream" sparkle:edSignature="FF+vGxSnEM2kSkqaS1H1/diwYsrYSQ2klUkECMhm2tQrguENUwckZK0fX0bL9PKOEADbLAIwZaLVvshgUCd1CA==" />
       <agenthudMacOnly>false</agenthudMacOnly>
-      <agenthudMinimumIOSVersion>1.4</agenthudMinimumIOSVersion>
+      <agenthudMinimumIOSVersion>1.5</agenthudMinimumIOSVersion>
     </item>
     <item>
-      <title>0.4.38</title>
-      <pubDate>Fri, 09 Oct 2026 09:21:57 +0800</pubDate>
-      <link>https://github.com/jazzenchen/agent-hud-open/releases/tag/v0.4.38</link>
-      <sparkle:version>477</sparkle:version>
-      <sparkle:shortVersionString>0.4.38</sparkle:shortVersionString>
+      <title>0.5.3</title>
+      <pubDate>Mon, 12 Oct 2026 17:48:10 +0800</pubDate>
+      <link>https://github.com/jazzenchen/agent-hud-open/releases/tag/v0.5.3</link>
+      <sparkle:version>485</sparkle:version>
+      <sparkle:shortVersionString>0.5.3</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <description sparkle:format="markdown"># Agent HUD 0.4.38
+      <description sparkle:format="markdown"># Agent HUD 0.5.3
 
 ## Compatibility
 
-**Requires Agent HUD for iPhone 1.4 or later** for iPhone and Apple Watch sync. Update the iPhone app before updating the Mac. Older iPhone versions cannot read this release's data.
+**Requires Agent HUD for iPhone 1.5 or later** for iPhone and Apple Watch sync. Update the iPhone app before updating the Mac. Older iPhone versions cannot read this release's data.
 
 [Get the iPhone app](https://apps.apple.com/app/id6812113619).
 
@@ -52,12 +60,16 @@ Requires an Apple Silicon Mac running macOS 14 or later.
 
 ## Changes
 
-- Restore a visible close button on expanded reply reminders. Closing a reply advances the event queue while leaving waiting permission requests unanswered.
-- Identify Grok Bot subagent billing conversations from their native session namespace, including subagents absent from the local conversation roster. Titles include their distinct IDs. Original billing identities and token totals are preserved without double counting; available native conversation metadata is joined only by exact ID.
+- Shows an agent that is billed by use and has only a balance, such as DeepSeek through its API, on the Simple panel: its logo, an empty ring and the balance, after the agents with quota windows. With Separate agents on, hovering it reads the balance, on the Simple panel and on the Dynamic dock.
+- Keeps a hovered agent's logo as the logo while its small card shows, with Separate agents on. A click that opens the whole panel turns it into its bot, which watches the pointer until the panel closes.
+- Writes what a dock shows on hover to the dock's size: a Simple panel or Dynamic dock set larger than its default writes its hover line or bubble and its compact reminders larger too. Nothing is written smaller than at the default.
+- Makes a compact reminder on a dock a slimmer pill, 34 pt high instead of 48, and gives reminder cards the type sizes of the usage panel.
+- Keeps the line above the Tokens section from crossing the token chart's hover box, and writes the box's date once for a period inside one day.
+- Shows the closed hand while the HUD is dragged. In 0.5.1 and 0.5.2 the pointer stayed an arrow.
 </description>
-      <enclosure url="https://github.com/jazzenchen/agent-hud-open/releases/download/v0.4.38/Agent-HUD-0.4.38-arm64.dmg" length="12670540" type="application/octet-stream" sparkle:edSignature="zhv/+bLwp5cUrroJw+jaeKfBANoRJlvkYmi1+pNAz4BUPkFvqNRwbtPwCjJuDn1yj9gIlNsA66rvTrB7bBPEBQ==" />
+      <enclosure url="https://github.com/jazzenchen/agent-hud-open/releases/download/v0.5.3/Agent-HUD-0.5.3-arm64.dmg" length="13217651" type="application/octet-stream" sparkle:edSignature="j68LGQpx0aa3zT23IDMAz0A7jifkCLfWNodc8s2EU6hRo/ZC7HnELPFUP3bbnuv2nGojTUv9emiYX50TECxQAw==" />
       <agenthudMacOnly>false</agenthudMacOnly>
-      <agenthudMinimumIOSVersion>1.4</agenthudMinimumIOSVersion>
+      <agenthudMinimumIOSVersion>1.5</agenthudMinimumIOSVersion>
     </item>
   </channel>
 </rss>

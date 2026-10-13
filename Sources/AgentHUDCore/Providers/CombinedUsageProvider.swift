@@ -43,9 +43,16 @@ public struct CombinedUsageProvider: UsageProvider {
     private let vendors: [Source]
     private let ledger: UsageLedger
     private let results = Results()
+    /// The bot behind each Grok Bot routine run, which Cursor's account step keeps current.
+    private let grokBotRoutineRuns: GrokBotRoutineRuns?
     public init(_ sources: [Source], ledger: UsageLedger = .inMemory()) {
+        self.init(sources, ledger: ledger, grokBotRoutineRuns: nil)
+    }
+
+    init(_ sources: [Source], ledger: UsageLedger, grokBotRoutineRuns: GrokBotRoutineRuns?) {
         vendors = sources
         self.ledger = ledger
+        self.grokBotRoutineRuns = grokBotRoutineRuns
     }
 
     /// - settings: the store the app collects with; GitHub Copilot's quota is read only while it holds the user's consent,
@@ -54,12 +61,16 @@ public struct CombinedUsageProvider: UsageProvider {
     ///   removed or imported and no account identity is remembered; pass a ledger in memory as well.
     public static func standard(settings: SettingsStore, ledger: UsageLedger = .open(), persistent: Bool = true) -> CombinedUsageProvider {
         if persistent { removeLegacyCaches(in: AppSupport.directory) }
+        let routineRuns = GrokBotRoutineRuns(fileURL: persistent ? AppSupport.directory.appendingPathComponent("grok-bot-routine-runs.json") : nil)
         return CombinedUsageProvider([
             Source("Claude", ClaudeCodeProvider.standard(ledger: ledger, persistent: persistent)),
             Source("Codex", CodexUsageProvider.standard(ledger: ledger, persistent: persistent)),
             Source("DeepSeek", DeepSeekUsageProvider.standard(ledger: ledger)),
-        ] + AdditionalSource.allCases.map { Source($0.vendor, AdditionalUsageProvider.standard($0, settings: settings, ledger: ledger, persistHistory: persistent)) }
-          + [Source("Open agents", OpenAgentUsageProvider.standard(ledger: ledger, persistHistory: persistent))], ledger: ledger)
+        ] + AdditionalSource.allCases.map {
+            Source($0.vendor, AdditionalUsageProvider.standard($0, settings: settings, ledger: ledger, persistHistory: persistent,
+                                                               grokBotRoutineRuns: $0 == .cursor ? routineRuns : nil))
+        } + [Source("Open agents", OpenAgentUsageProvider.standard(ledger: ledger, persistHistory: persistent))],
+            ledger: ledger, grokBotRoutineRuns: routineRuns)
     }
 
     public func refreshAccountUsage(historyHours: Int) async {
@@ -137,7 +148,7 @@ public struct CombinedUsageProvider: UsageProvider {
         let usage = ((try? await ledger.buckets(since: since)) ?? []) + reported
         var periods = (try? await ledger.periods(endingAt: now)) ?? UsagePeriods()
         periods.add(reported, endingAt: now)
-        let sessions = GrokBotUsage.merge(reports.flatMap(\.sessions))
+        let sessions = GrokBotUsage.merge(reports.flatMap(\.sessions), routineRuns: await grokBotRoutineRuns?.links ?? [:])
         let progress = reports.compactMap(\.indexing)
         let sessionUsage = await breakdowns(of: sessions)
         return UsageReport(generatedAt: now, snapshots: Dictionary(grouping: reports.flatMap(\.snapshots), by: \.agentId).values.compactMap { $0.max { $0.updatedAt < $1.updatedAt } }.sorted { $0.agentId < $1.agentId },
@@ -201,11 +212,12 @@ public struct CombinedUsageProvider: UsageProvider {
 
     /// Each vendor's next account reading comes from its last result: its quota moves while its own work runs. A vendor
     /// whose last read failed has no result to judge and keeps the account interval.
-    public func accountChecks(since: [String: Date], now: Date) async -> [String: Date] {
+    public func accountChecks(since: [String: Date], spread: [String: TimeInterval], now: Date) async -> [String: Date] {
         let reports = await results.reports()
         return vendors.reduce(into: [:]) { due, vendor in
             guard let last = since[vendor.vendor], let report = reports[vendor.vendor] else { return }
-            due[vendor.vendor] = report.accountCheck(since: last, now: now, seesLocalWork: vendor.provider.seesLocalWork)
+            due[vendor.vendor] = report.accountCheck(since: last, now: now, seesLocalWork: vendor.provider.seesLocalWork,
+                                                     spread: spread[vendor.vendor] ?? 0)
         }
     }
 

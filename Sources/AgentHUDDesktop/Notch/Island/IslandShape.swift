@@ -3,10 +3,15 @@ import AgentHUDCore
 
 /// One island silhouette on any screen edge. Its two contact corners flare outward; its inward corners are
 /// convex. `rect` includes the flares along the contact edge, outside the core that holds upright content.
+///
+/// With `lift` set the silhouette floats instead: the same core, rounded on every corner and held `lift`
+/// points off the contact edge. `topRadius` is then only the room the flares would have taken, so a floating
+/// panel fills the card a flared one would, and a small floating panel can grow into a large one.
 struct IslandShape: Shape, Animatable {
     var topRadius: CGFloat
     var bottomRadius: CGFloat
     var edge: HUDEdge = .top
+    var lift: CGFloat? = nil
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get { AnimatablePair(topRadius, bottomRadius) }
@@ -35,6 +40,13 @@ struct IslandShape: Shape, Animatable {
     }
 
     private func topPath(in rect: CGRect) -> Path {
+        if let lift {
+            let side = max(0, min(topRadius, rect.width / 2))
+            let core = CGRect(x: rect.minX + side, y: rect.minY + lift,
+                              width: rect.width - 2 * side, height: max(0, rect.height - lift))
+            return Path(roundedRect: core, cornerRadius: max(0, min(bottomRadius, core.width / 2, core.height / 2)),
+                        style: .continuous)
+        }
         let top = max(0, min(topRadius, rect.width / 2, rect.height / 2))
         let bottom = max(0, min(bottomRadius, (rect.width - 2 * top) / 2, rect.height - top))
         var path = Path()

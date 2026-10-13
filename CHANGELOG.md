@@ -2,13 +2,113 @@
 
 Releases of Agent HUD Open. A version is a git tag `vX.Y.Z` or `vX.Y.Z-beta.N` on `main`; `CFBundleShortVersionString` in `scripts/build-app.sh` carries the three-part numeric version `X.Y.Z`. Each entry lists what changed for people using the application and, under **Host API**, what changed for applications that embed `AgentHUDCore` and `AgentHUDDesktop`. Dates are tag dates.
 
+## Unreleased
+
+- A compact reminder on a dock is smaller: as tall as the Simple panel's hover line (26 pt at the default, where it was 34) and as long as what it says, where it was always two notch wings long with a gap in the middle. A reply from Claude is about 60 pt shorter at the default than the 256 pt it was.
+- A dock's compact reminder and the Simple panel's hover line are as tall as one of the dock's marks: a Simple panel's ring, a Dynamic dock's logo. Since 0.5.3 they grew with the panel's figures or with the logo's share of its default size, which made them taller than the mark they sit beside and their text larger than anything on the dock. Beside a 30 pt ring the hover line is 30 pt high with 14 pt text where it was 36 pt with 17 pt, and a reminder is 30 pt high with 15 pt text where 0.5.3 drew 48 pt with 18 pt. The Dynamic dock's hover bubble follows the same scale: beside 36 pt logos it is 271 pt wide with an 18 pt name, where it was 353 pt with 23 pt. Nothing changes at either default or beside the notch, and nothing is written smaller than at the default.
+- Host API: `CompactWings` and the `compactWings` environment value; the `wings` argument of `IslandRootView.dockCompactSize(edge:collapsedSize:scale:wings:)`.
+- Host API: `IslandRootView.dockScale(mode:placement:)` gives a dock's scale; `IslandRootView.dockCompactHeight` replaces `dockCompactRowHeight`, and `AgentPeek.lineReference` is gone.
+
+## 0.5.3 — 2026-10-12
+
+- Requires Agent HUD for iPhone 1.5 or later for iPhone and Apple Watch viewing, as 0.5.0 does.
+- A recording made with `--record` and a `--snapshot` still no longer show a thin line past each tip of a capsule's outline: on a reply's pill beside a separated dock, at the ends of a Simple panel on the top or bottom edge, on a plan badge. The line was never on screen. Core Animation's software renderer, which draws both, adds it to an outline with continuous corners on a shape too short for them.
+- With Separate agents on, the hovered agent's logo answers to its card. While the small card shows, it is the logo, whatever the agent is doing; a click that opens the whole panel turns it into its bot, which watches the pointer until the panel closes. Closing the card gives it back to its agent.
+- What a dock answers a glance with follows the dock's size. A Simple panel or Dynamic dock set larger than its default writes its hover line or bubble and its compact reminders larger too, in step with its own figures or logos, instead of always at 12 and 13 pt; nothing is written smaller than at the default.
+- A compact reminder on a dock is a slimmer pill: 34 pt high instead of 48.
+- Reminder cards use the sizes the usage panel uses: "New reply" beside the agent's name is 12 pt as in the compact reminder, and the model's name and the second lines that were 10 pt are 11.
+- The token chart's hover box is no longer crossed by the line above the Tokens section, which ran over its date in the usage panel. The date is written once for a period inside one day ("Sun 11 Oct at 23:00 – 23:15", or the date alone for a whole day) and at 11 pt instead of 10.
+- The Simple panel shows an agent that is billed by use and has only a balance, such as DeepSeek through its API: its logo, an empty ring and the balance, after the agents with quota windows. Hovering it with Separate agents on reads the balance, on the Simple panel and on the Dynamic dock, where the line used to be the agent's name alone.
+- Host API: `SimpleMeterItem.balance`, `SimpleMeterItem.Balance`, `SimpleMeterItem.balances(_:)` and the `balances` argument of `SimpleMeterItem.items(rows:balances:working:)`.
+- Host API: `AgentPeek.scale`; `IslandRootView.stripScale` and the `stripScale` environment value; `IslandRootView.dockCompactSize(edge:collapsedSize:scale:)`.
+- Host API: `ChartData.period(_:calendar:)`.
+- Host API: `BotPhase.glanced` and `BotPhase.opened`; `MarkAttention`, carried by `LogoQueueItem.attention` and `SimpleMeterItem.attention`.
+
+## 0.5.2 — 2026-10-12
+
+- Requires Agent HUD for iPhone 1.5 or later for iPhone and Apple Watch viewing, as 0.5.0 does.
+- Codex Desktop's app approvals and Question cards appear for long threads too. Desktop answers each reading with the thread's whole history in one frame, and a frame past 8 MiB was dropped, so a long thread showed no card; frames up to 64 MiB are read.
+- Reading a Codex Desktop thread costs about a third of the CPU it did, and a long thread is read less often: after each reading a thread rests ten times as long as the reading took, so a thread with 33 MB of history is asked about every 8 s instead of every 2 s, which also spares Desktop building the answer. A resting thread keeps its cards.
+- Host API: `CodexDesktopIPC.conversationState(source:owner:threadID:)` gives a snapshot as a `JSONValue` parsed once from its frame; `CodexDesktopPermissions.Snapshot.readSeconds` says how long each thread's reading took.
+- The demo shows the sample the iPhone's demo shows, shaped like real data: Claude's and Codex's quota windows under an account each, a DeepSeek balance, nine sessions, a month of tokens, and current model names (Fable 5.1, Opus 5.5, Sonnet 5.5, gpt-6-astra, gpt-6.1-sol, deepseek-v4-pro). A demo script names a window by its key, such as `claude-session`, and its sessions run from `s1` to `s9`.
+- Host API: `DemoData` has `claudeAccount`, `codexAccount`, `claudeRows`, `codexRows`, `consumers`, `accounts(now:)`, `usage(now:)` and `snapshots(for:now:stage:)` in place of the two Codex accounts and the per-model quota table; `DemoSeries` and `SeededRandom` are gone.
+
+## 0.5.1 — 2026-10-12
+
+- Requires Agent HUD for iPhone 1.5 or later for iPhone and Apple Watch viewing, as 0.5.0 does.
+- Display settings has a Separate agents switch for Simple and Dynamic, off by default. Hovering an agent's logo shows a small card for that agent beside it, one line growing out of a Simple panel, and a click on the logo or the card opens that agent's whole panel. A reply opens as a pill beside its sender's logo and a permission request opens straight into its card, while the other logos stay. Cards grow out of the dock and slide from logo to logo; Reduce Motion keeps a plain fade.
+- A press picks the HUD up after 6 pt of travel or 0.3 s held still, and the dashed bounds appear at that moment instead of on mouse down. The closed hand stays for the whole drag, the dashes follow a Simple panel's rounded shape, and docked compact alerts keep 16 pt at each end instead of 32.
+- A turn that starts in a log its client keeps open, as Codex does, is noticed within five seconds instead of at the five-minute fallback read: the logs of the sessions active in the last day are looked at every five seconds.
+- Host API: `ScreenPlacement.separatesAgents`.
+- Quota and balance are read less often while work runs: every 150 to 210 s while one of a client's turns runs instead of every minute, and every 5 to 6 minutes while a session of its is live between turns instead of every three. For Claude Code that is 20 engine launches an hour during a turn instead of 60. A reading that follows an interval or a window's reset waits a random time of up to a minute, so copies of the application on accounts that reset together no longer ask the service in the same second; the reading after a turn ends, and the one opening the panel asks for, are taken at once as before.
+- Host API: `UsageRefresh.accountSpread`; `UsageProvider.accountChecks(since:spread:now:)` replaces `accountChecks(since:now:)`, and `runningAccountInterval` and `liveAccountInterval` are 150 s and 300 s.
+- `--demo-script <name|file>` plays a timed scenario in the demo, so a recording shows the same events at the same moments in every take: sessions start and end, a permission request arrives and is taken back, a reply arrives, a window fills up, the panel opens. `showcase` is built in; a JSON file gives any other.
+- `--record <file.mov>` records the main display's HUD alone to a ProRes 4444 movie with a transparent background, with `--record-seconds`, `--record-fps` and `--record-region`. It draws from the HUD's own windows, so it needs no screen recording permission.
+- `--demo-clock <time>` starts the demo at a named moment, such as `2026-10-12T09:41`, and lets its time run on from there, so a take or a set of `--snapshot` stills shows the same dates and hours whenever it is made.
+- Host API: `UsageStore` takes a `clock` and reads the time from it; `UsageAssembly.store` gives a store without a ledger the demo's (`DemoClock`). `DesktopLaunchOptions` carries `demoClock`.
+- Host API: `DemoScript`, `DemoStage` and `DemoStageBox` let `DemoUsageProvider` report from a playing script; `PermissionRequests.showDemo` shows a chosen set of the demo's requests; `DesktopLaunchOptions` carries `demoScript` and the `record…` options.
+- Display settings lists the HUD modes as Notch, Simple, Dynamic; in Chinese, Simple is 简约 and Dynamic is 动态.
+- Simple has a Bot animation switch, off by default: a working agent's logo in the panel becomes its bot, and idle logos visit as bots now and then.
+- A permission or reply reminder opens showing the agent's logo, which turns into its bot once the card has opened, instead of appearing as the bot at once.
+- Host API: `ScreenPlacement.simpleBots`; `BotMark.staysBot` and `BotActor.restsHidden` for a mark that follows its agent and draws its own resting logo; `BotMotion.arrivesAfter` holds a staying bot as its logo first.
+- `scripts/measure-process-cpu.py` converts the kernel's CPU ticks to seconds; on Apple silicon it reported figures 41.7 times too small.
+- Less CPU in the background. Bots are stepped only as often as their motion shows — 30 times a second for a morph, an act or a blink, 10 for a breath — and not at all while a dock's logos wait for their next visit; their frames are drawn in the display's colours, so showing one no longer converts it. The Antigravity approval and DeepSeek Harness question observers list this user's processes at most every 10 seconds instead of every 2, search the listing instead of taking every line apart, and look again at once when a service stops answering.
+- Codex Desktop's mid-turn Question cards appear on the HUD, including questions with only a reply field. Answers go to the original active turn; Skip leaves the question unanswered.
+- Host API: `PermissionRequest.NativeApproval.asynchronousQuestion(turnID:)` identifies native mid-turn questions; `CodexDesktopPermissions` reads and answers them alongside app approvals.
+- Hovering a Simple panel grows the panel itself into the usage panel and shrinks it back on leaving, instead of fading a separate panel in over it. Open, it keeps floating 3 pt off its edge with every corner rounded.
+- Host API: `IslandShape.lift` draws the silhouette floating off its edge instead of flaring into it.
+
+## 0.5.0 — 2026-10-11
+
+- Requires Agent HUD for iPhone 1.5 or later for iPhone and Apple Watch viewing. Version 1.5 is now available on the App Store; update the iPhone app before the Mac.
+- Simple is a third HUD mode beside Notch and Dynamic Dock: a small floating panel on any screen edge, with no glow behind it, showing each agent's most used quota window as a ring round its logo, a percentage beside it, or both. Display settings sets its size (16–40 pt), the ring's thickness (1–4 pt) and whether rings and numbers are shown. It drags to any edge like the dock.
+- Simple's percentages use Regular weight, and the figures keep their positions while the panel opens on every edge.
+- Choosing Dynamic Dock or Simple in Display settings for a display with a notch starts a HUD that was at top centre at the top left, where the notch does not cover it.
+- Host API: `HUDMode.simple` and `HUDMode.isDocked`; `ScreenPlacement.simpleSize`, `ringWidth`, `showsRings` and `showsNumbers`.
+- Idle agents' logos in Dynamic Dock become their bots for a few seconds now and then. Bots in the dock stay in place instead of bobbing, logos can be up to 36 pt, and Display settings has a Logo edge distance slider (0–20 pt).
+- Host API: `ScreenPlacement.logoEdgeDistance` is the distance from the visible logo to its edge; `logoSizeRange` is 12...36.
+- Codex Desktop Computer Use app-access requests appear on the HUD, with Deny, Allow this conversation, and Always allow when offered by Desktop. Native answers and dismissals follow the original request; engine approvals keep their existing hook reviewer policy.
+- Host API: `CodexDesktopIPC` provides the shared Desktop owner transport; `CodexDesktopPermissions` reads and answers native app requests. `PermissionRequest.nativeApproval` carries the advertised scopes and `allowLabel` names their conversation choice.
+- Agent logos turn into small bots. In Dynamic Dock a working agent's logo morphs into a body with its own outline and colours and two eyes that follow the pointer; a permission reminder shows the bot asking, and a reply reminder shows it smiling. Display settings has a Bot logos switch, on by default; Reduce Motion keeps the logos.
+- Host API: `Settings.botLogos` controls the bots. `LogoQueueConfig.bots` carries it to a logo queue.
+- Grok subscription windows remain visible as N/A when usage is unavailable, retaining their reset time without inventing a percentage, forecast or alert. An explicit unavailable reading replaces a previous numeric value.
+- Grok accounts show prepaid balances and on-demand spending amounts, including known zero-dollar values. Confirmed CLI/Bot accounts can supplement native subscription readings with wallet data; each reading keeps its own observation time.
+- Healthy Grok Bot cache provenance and its reading time appear in an information tooltip rather than a permanent notice.
+- Host API: `UsageSnapshot.remainingPct` is optional for an explicitly unavailable value, and `ReadingAssessment.hasValue` excludes it from numeric status and events. `AccountObservation.wallets` carries `AccountWallet` money readings; `sourceInfo` carries informational provenance. Older saved reports remain readable.
+- Agents settings refreshes signed-in accounts when opened and offers Refresh accounts. Accounts a successful reading no longer reports leave the current inventory; a failed identity reading keeps its last current account until a replacement or sign-out can be confirmed.
+- Scheduled Grok Bot routine runs join their bot's session, preserving their own native identities and token usage.
+- Since the previous stable release, 0.4.36: sessions group by Git project, including worktrees, and Codex child agents have their own task, workspace, status and usage without recounting inherited history. Grok CLI and Grok Bot have separate execution identities while confirmed accounts share quota; billing-only Bot children stay out of session lists without losing token accounting.
+- The HUD prioritizes waiting and running sessions, lists at most five recent sessions, and puts them below Tokens. Its token chart always covers the latest 24 hours in 15-minute bars, independently of Dashboard filters. Reply reminders have a close button that leaves waiting permissions unanswered.
+- Grok sessions return to their originating client when a destination is available. Locally available Grok CLI, Grok Bot and Antigravity conversation text is available to read-only conversation consumers, with cached Bot gaps kept explicit.
+- ZCode questions can be answered on the HUD, and compatible DeepSeek Harness web hosts expose questions through their local event API. Codex permission hooks answer only confirmed user review and leave automatic or unknown reviewers to Codex.
+- Host API since 0.4.36: `LiveSession.agentName`, `subagentSessions` and `usageKey`; `SessionProject`; client-specific `SessionSource.agentVendor` and optional `SessionCompletion.client`; `PermissionDecision.answer` and optional `PermissionQuestion.id` preserve session lineage, billing ownership and question identities.
+
+## 0.4.39-beta.2 — 2026-10-09
+
+- Requires Agent HUD for iPhone 1.5 or later for iPhone and Apple Watch viewing. Use the corresponding TestFlight build while 1.5 is awaiting App Store review.
+- The distributed Mac app computes canonical record IDs once before ordering LAN snapshots and replay batches, removing repeated encoding from the sorting hot path.
+- Native Grok Bot quota reading recognises personal SuperGrok accounts whose usage records include both a user principal and a team ID.
+- Codex permission hooks leave automatic and unknown reviewers unanswered, so Codex can continue its own approval flow. The HUD only handles confirmed user review.
+- Known issue: Grok prepaid and on-demand wallet amounts, zero-dollar wallets and the missing-quota placeholder remain outstanding in [issue #20](https://github.com/jazzenchen/agent-hud-open/issues/20).
+
+## 0.4.39-beta.1 — 2026-10-09
+
+- Beta compatibility: requires Agent HUD Remote for iPhone 1.5 or later for iPhone and Apple Watch viewing. Update the iPhone app first; use the corresponding TestFlight build while 1.5 is unavailable on the App Store.
+- The distributed Mac app recovers cross-device publication after partial upload failures and serves consistent local-network readings during refreshes, fixing communication problems in earlier LAN Betas.
+- Confirmed Grok CLI/Bot account links use the valid native Bot quota cache, keep its original reading time and retire duplicate account rows. Bot cache changes refresh the reading immediately; expired CLI credentials do not break an unambiguous confirmed identity.
+- Sessions omit Grok Bot subagents known only from billing records, including restored reports from older builds. Their token usage remains counted; native Bot conversations and identified children remain available.
+- Host API: `LiveSession.isBillingOnlyGrokBotSubagent` identifies these internal billing records. `ReportView.sessions` excludes them while the report retains their accounting data.
+- The README shows the HUD animation directly, adds desktop session and iPhone screenshots, and links to Mac downloads, the App Store and source builds.
+
 ## 0.4.38 — 2026-10-09
 
+- Release status: **Beta / Pre-release**. **Critical known issue:** the LAN changes conflict with the communication mechanism in existing Agent HUD Remote iOS versions and may disrupt cross-device communication or sync. Wait for a verified compatibility fix before upgrading.
 - Bot subagent billing conversations use their native identity namespace to show Grok Bot as the execution client, even when absent from the local conversation roster. Their titles include distinct subagent IDs, and their Cursor billing totals count once.
 - Expanded reply reminders have a visible close button. Closing a reply advances the event queue while leaving waiting permissions unanswered.
 
 ## 0.4.37 — 2026-10-09
 
+- Release status: **Beta / Pre-release**. **Critical known issue:** the LAN changes conflict with the communication mechanism in existing Agent HUD Remote iOS versions and may disrupt cross-device communication or sync. Wait for a verified compatibility fix before upgrading.
 - Grok Bot sessions show token usage and billing model identifiers from Cursor dashboard conversations with the same native agent ID. Matched sessions retain their Bot title, conversation and navigation, while unmatched conversations stay under Cursor; billing events count once.
 - Host API: `LiveSession.usageKey` optionally references another provider's canonical ledger contribution. `SessionUsageRequest` uses that contribution for the session's own breakdown and calls; execution identity and billing consumer identity remain separate.
 - Grok accounts and quota stay under Grok. Grok CLI and Grok Bot have distinct client entries and artwork; Bot installation is detected independently, with its session reading capability shown explicitly.

@@ -190,6 +190,27 @@ final class PermissionAlertTests: XCTestCase {
             "two": .init(selected: ["A"], custom: "A, but later"),
         ])
     }
+
+    func testFreeTextQuestionCanBeAnsweredAndSkippedWithoutLosingItsDraft() {
+        let question = PermissionQuestion(id: "readiness", question: "Reply when ready", options: [])
+        let draft = QuestionDraft()
+        XCTAssertNil(draft.answer(0, of: question))
+
+        draft.type("  \n  ", of: 0, in: question)
+        XCTAssertNil(draft.answer(0, of: question), "whitespace leaves Submit disabled")
+        XCTAssertEqual(draft.answers(for: [question]), [:])
+
+        draft.type("  已就绪  ", of: 0, in: question)
+        XCTAssertEqual(draft.answer(0, of: question), .init(custom: "已就绪"))
+        XCTAssertEqual(draft.answers(for: [question]), ["readiness": .init(custom: "已就绪")])
+        XCTAssertEqual(draft.own[0], "  已就绪  ", "the field keeps the user's original text")
+
+        draft.skip(0)
+        XCTAssertEqual(draft.answers(for: [question]), [:], "Skip sends no answer for this question")
+        XCTAssertEqual(draft.own[0], "  已就绪  ", "Skip preserves the draft for a return to this question")
+        draft.chooseOwn(of: 0, in: question)
+        XCTAssertEqual(draft.answer(0, of: question), .init(custom: "已就绪"))
+    }
 }
 
 /// What counts as pointing at the HUD, which decides whether a waiting request can be answered at all.

@@ -253,7 +253,7 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
                 }
             },
             turns: candidates.compactMap(\.reading.turn),
-            // A login without plan limits has no current subscription account; earlier accounts keep their last readings.
+            // A confirmed login without plan limits has no current subscription account and retires earlier quota rows.
             accounts: reading.map { reading in
                 ["Claude": usage == nil ? [] : [AccountObservation(account: self.account(for: reading), home: home,
                     label: reading.identity?.email, plan: plan, observedAt: updatedAt)]]
