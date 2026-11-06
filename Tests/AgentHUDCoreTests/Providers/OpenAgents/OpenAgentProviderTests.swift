@@ -164,6 +164,28 @@ final class OpenAgentProviderTests: XCTestCase {
                      "a token is never sent to another host than the console that issued it")
     }
 
+    /// OpenCode 2 rotates the token in `credential`; the stale `account` row must not win over it.
+    func testOpenCodeCredentialTableWinsOverStaleAccountRow() throws {
+        let file = try temp().appendingPathComponent("opencode.db")
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(file.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        let expiry = Int64((now.timeIntervalSince1970 + 86400) * 1000)
+        let value = #"{"type":"oauth","access":"fresh-token","expires":\#(expiry),"metadata":{"server":"https://opencode.ai/console","accountID":"user_1","email":"a@example.com","orgID":"org_1"}}"#
+        for statement in [
+            "CREATE TABLE account(id TEXT, email TEXT, url TEXT, access_token TEXT, refresh_token TEXT, token_expiry INTEGER)",
+            "CREATE TABLE account_state(id INTEGER, active_account_id TEXT, active_org_id TEXT)",
+            "CREATE TABLE credential(id TEXT, integration_id TEXT, value TEXT, active INTEGER)",
+            "INSERT INTO account VALUES ('user_1', 'a@example.com', 'https://opencode.ai/console', 'stale-token', 'refresh', \(expiry))",
+            "INSERT INTO account_state VALUES (1, 'user_1', 'org_1')",
+            "INSERT INTO credential VALUES ('cred_1', 'opencode', '\(value)', 1)",
+        ] { XCTAssertEqual(sqlite3_exec(db, statement, nil, nil, nil), SQLITE_OK) }
+        let go = try XCTUnwrap(OpenAgentCredentials.openCodeConsole(file, now: now))
+        XCTAssertEqual(go.token, "fresh-token")
+        XCTAssertEqual(go.headers["x-opencode-org-id"], "org_1")
+        XCTAssertEqual(go.accountLabel, "a@example.com")
+    }
+
     func testGLMRegionsAndMCPStaySeparateAndInvalidResetIsOmitted() throws {
         let raw = #"{"success":true,"code":200,"data":{"limits":[{"type":"CREDIT_LIMIT","unit":3,"number":5,"percentage":40,"usage":100,"currentValue":20,"remaining":75,"nextResetTime":1999999999999},{"type":"TIME_LIMIT","unit":5,"number":1,"percentage":5}]}}"#
         let cn = try OpenAgentQuotaClient.parse(json(raw), credential: credential(.glmChina), now: now)

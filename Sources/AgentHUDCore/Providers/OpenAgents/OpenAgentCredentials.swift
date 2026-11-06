@@ -173,13 +173,25 @@ enum OpenAgentCredentials {
     static func openCodeConsole(_ url: URL, now: Date) -> OpenAgentCredential? {
         guard FileManager.default.fileExists(atPath: url.path), let db = try? ReadOnlySQLite(url) else { return nil }
         var row: (id: String, token: String, url: String, expiry: String?, org: String, email: String?)?
-        try? db.rows("""
-            SELECT a.id, a.access_token, a.url, a.token_expiry, s.active_org_id, a.email FROM account_state s
-            JOIN account a ON a.id = s.active_account_id WHERE s.active_org_id IS NOT NULL LIMIT 1
-            """) { r in
-            guard let id = ReadOnlySQLite.text(r, 0), let token = ReadOnlySQLite.text(r, 1), let url = ReadOnlySQLite.text(r, 2),
-                  let org = ReadOnlySQLite.text(r, 4) else { return }
-            row = (id, token, url, ReadOnlySQLite.text(r, 3), org, ReadOnlySQLite.text(r, 5))
+        // OpenCode 2 keeps the sign-in as JSON in `credential` and rotates its token there; a row left in `account`
+        // by an earlier version still looks unexpired but is refused, so it is only read when there is no credential.
+        try? db.rows("SELECT value FROM credential WHERE integration_id = 'opencode' AND active = 1 LIMIT 1") { r in
+            guard let value = ReadOnlySQLite.text(r, 0), let data = value.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], json["type"] as? String == "oauth",
+                  let token = json["access"] as? String, let metadata = json["metadata"] as? [String: Any],
+                  let url = metadata["server"] as? String, let id = metadata["accountID"] as? String,
+                  let org = metadata["orgID"] as? String else { return }
+            row = (id, token, url, (json["expires"] as? NSNumber)?.stringValue, org, metadata["email"] as? String)
+        }
+        if row == nil {
+            try? db.rows("""
+                SELECT a.id, a.access_token, a.url, a.token_expiry, s.active_org_id, a.email FROM account_state s
+                JOIN account a ON a.id = s.active_account_id WHERE s.active_org_id IS NOT NULL LIMIT 1
+                """) { r in
+                guard let id = ReadOnlySQLite.text(r, 0), let token = ReadOnlySQLite.text(r, 1), let url = ReadOnlySQLite.text(r, 2),
+                      let org = ReadOnlySQLite.text(r, 4) else { return }
+                row = (id, token, url, ReadOnlySQLite.text(r, 3), org, ReadOnlySQLite.text(r, 5))
+            }
         }
         // The token is only ever sent to opencode.ai, the host of the console it was issued by.
         guard let row, !row.token.isEmpty, !row.org.isEmpty, URL(string: row.url)?.scheme == "https",
