@@ -4,16 +4,13 @@ import Foundation
 public enum HUDMode: String, Codable, Sendable, CaseIterable {
     /// The island: the notch itself, or a bar standing in for one on displays without.
     case notch
-    /// A queue of the agents' own logos, parked on a screen edge, with the glow behind them as a backdrop.
+    /// A queue of the agents' own logos, parked on a screen edge.
     case logos
-    /// A small floating panel on a screen edge with no glow behind it: each agent's mark, with its tightest
-    /// window as a ring round it, a percentage beside it, or both.
-    case simple
-    /// No HUD on this screen at all: no island, no queue, no glow, no hover panel.
+    /// No HUD on this screen at all: no island, no queue, no hover panel.
     case off
 
     /// Parked on a screen edge and opening inward from it, rather than standing at the notch.
-    public var isDocked: Bool { self == .logos || self == .simple }
+    public var isDocked: Bool { self == .logos }
 }
 
 /// The screen edge a HUD is parked on. It runs along that edge and opens inward.
@@ -34,8 +31,7 @@ public enum HUDEdge: String, Codable, Sendable, CaseIterable {
 }
 
 /// One screen's HUD. Everything here is per screen: two displays can run different modes, sit on
-/// different edges and size their logos differently. The glow is per screen too, kept beside this in
-/// `Settings.screenGlow` under the same display key, with `Settings.glow` for a display that has none.
+/// different edges and size their logos differently.
 public struct ScreenPlacement: Hashable, Codable, Sendable {
     /// Side of one mark in points, independent of the display's menu bar height.
     public static let logoSizeRange: ClosedRange<Double> = 12...36
@@ -44,10 +40,6 @@ public struct ScreenPlacement: Hashable, Codable, Sendable {
     /// Gap between logos, as a share of the logo's height. A gap wider than about half a mark reads as
     /// separate marks rather than one queue.
     public static let gapScaleRange: ClosedRange<Double> = 0.1...0.6
-    /// Diameter of one ring in Simple mode, in points. The marks and numbers are sized from it.
-    public static let simpleSizeRange: ClosedRange<Double> = 16...40
-    /// Stroke of that ring, in points.
-    public static let ringWidthRange: ClosedRange<Double> = 1...4
     public var mode: HUDMode
     public var edge: HUDEdge
     /// The queue's centre along its edge, as a fraction of that edge's length, so it survives a
@@ -56,20 +48,8 @@ public struct ScreenPlacement: Hashable, Codable, Sendable {
     public var logoSize: Double
     public var logoEdgeDistance: Double
     public var gapScale: Double
-    /// Draw the marks. Turning them off leaves the backdrop alone — it still spans what the marks would
-    /// have occupied, so the field keeps its place and its width; only the logos stop being drawn.
+    /// Draw the marks. Turning them off keeps the queue's place and width; only the logos stop being drawn.
     public var showsLogos: Bool
-    public var simpleSize: Double
-    public var ringWidth: Double
-    /// Simple mode draws each agent's tightest window as a ring round its mark.
-    public var showsRings: Bool
-    /// Simple mode writes the percentage used beside each mark.
-    public var showsNumbers: Bool
-    /// Simple mode turns a working agent's mark into its bot, and lets idle marks visit as bots.
-    public var simpleBots: Bool
-    /// A docked HUD answers for one agent at a time: hovering a mark opens that agent's own panel from the
-    /// mark, and a request or reminder grows from the mark of the agent that sent it while the others stay.
-    public var separatesAgents: Bool
 
     public init(
         mode: HUDMode = .logos,
@@ -78,13 +58,7 @@ public struct ScreenPlacement: Hashable, Codable, Sendable {
         logoSize: Double = 20,
         logoEdgeDistance: Double = 2,
         gapScale: Double = 0.4,
-        showsLogos: Bool = true,
-        simpleSize: Double = 22,
-        ringWidth: Double = 1.5,
-        showsRings: Bool = true,
-        showsNumbers: Bool = true,
-        simpleBots: Bool = false,
-        separatesAgents: Bool = false
+        showsLogos: Bool = true
     ) {
         self.mode = mode
         self.edge = edge
@@ -93,12 +67,6 @@ public struct ScreenPlacement: Hashable, Codable, Sendable {
         self.logoEdgeDistance = Self.clamp(logoEdgeDistance, to: Self.logoEdgeDistanceRange)
         self.gapScale = Self.clamp(gapScale, to: Self.gapScaleRange)
         self.showsLogos = showsLogos
-        self.simpleSize = Self.clamp(simpleSize, to: Self.simpleSizeRange)
-        self.ringWidth = Self.clamp(ringWidth, to: Self.ringWidthRange)
-        self.showsRings = showsRings
-        self.showsNumbers = showsNumbers
-        self.simpleBots = simpleBots
-        self.separatesAgents = separatesAgents
     }
 
     /// A display's starting point: a notched screen keeps its island, anything else shows the queue.
@@ -112,9 +80,10 @@ public struct ScreenPlacement: Hashable, Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case mode, edge, offset, logoSize, logoEdgeDistance, gapScale, showsLogos
-        case simpleSize, ringWidth, showsRings, showsNumbers, simpleBots, separatesAgents
     }
 
+    /// A mode this build does not have, such as a fuller build's Simple panel, reads as the logo queue that
+    /// stands closest to it.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = ScreenPlacement()
@@ -125,13 +94,7 @@ public struct ScreenPlacement: Hashable, Codable, Sendable {
             logoSize: try c.decodeIfPresent(Double.self, forKey: .logoSize) ?? d.logoSize,
             logoEdgeDistance: try c.decodeIfPresent(Double.self, forKey: .logoEdgeDistance) ?? d.logoEdgeDistance,
             gapScale: try c.decodeIfPresent(Double.self, forKey: .gapScale) ?? d.gapScale,
-            showsLogos: try c.decodeIfPresent(Bool.self, forKey: .showsLogos) ?? d.showsLogos,
-            simpleSize: try c.decodeIfPresent(Double.self, forKey: .simpleSize) ?? d.simpleSize,
-            ringWidth: try c.decodeIfPresent(Double.self, forKey: .ringWidth) ?? d.ringWidth,
-            showsRings: try c.decodeIfPresent(Bool.self, forKey: .showsRings) ?? d.showsRings,
-            showsNumbers: try c.decodeIfPresent(Bool.self, forKey: .showsNumbers) ?? d.showsNumbers,
-            simpleBots: try c.decodeIfPresent(Bool.self, forKey: .simpleBots) ?? d.simpleBots,
-            separatesAgents: try c.decodeIfPresent(Bool.self, forKey: .separatesAgents) ?? d.separatesAgents
+            showsLogos: try c.decodeIfPresent(Bool.self, forKey: .showsLogos) ?? d.showsLogos
         )
     }
 }

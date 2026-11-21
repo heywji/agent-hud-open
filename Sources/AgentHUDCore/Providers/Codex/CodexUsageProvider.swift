@@ -34,21 +34,16 @@ public actor CodexUsageProvider: UsageProvider, LedgerRecording {
     }
     private var clients: [String: ClientLogin] = [:]
     private let identityCacheURL: URL?
-    private let sessionOriginsDirectory: URL?
-    private let readTerminalOrigins: @Sendable (Set<String>) async -> [String: SessionNavigationTarget]
 
     public init(readLimits: @escaping @Sendable () async throws -> CodexRateLimits,
                 transcripts: CodexTranscriptStore, history: QuotaHistoryStore, home: String = "",
                 clock: @escaping @Sendable () -> Date = { Date() },
                 readPiLimits: @escaping @Sendable () async throws -> CodexRateLimits? = { nil }, piHome: String = "pi",
                 identityCacheURL: URL? = nil, readLoginAt: @escaping @Sendable (String) -> Date? = { _ in nil },
-                initialAccounts: [AccountObservation] = [], sessionOriginsDirectory: URL? = nil,
-                readTerminalOrigins: @escaping @Sendable (Set<String>) async -> [String: SessionNavigationTarget] = { _ in [:] }) {
+                initialAccounts: [AccountObservation] = []) {
         self.readLimits = readLimits; self.transcripts = transcripts; self.history = history; self.home = home; self.clock = clock
         self.readPiLimits = readPiLimits; self.piHome = piHome; self.identityCacheURL = identityCacheURL
         self.readLoginAt = readLoginAt
-        self.sessionOriginsDirectory = sessionOriginsDirectory
-        self.readTerminalOrigins = readTerminalOrigins
         if let data = identityCacheURL.flatMap({ try? Data(contentsOf: $0) }) {
             if let saved = try? JSONDecoder().decode(IdentityCache.self, from: data) {
                 emails = saved.emails; clients = saved.clients
@@ -72,7 +67,6 @@ public actor CodexUsageProvider: UsageProvider, LedgerRecording {
         let piHome = "pi:" + ClientHome.key(pi.directory, defaultDirectory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent"))
         let cached = persistent ? (try? Data(contentsOf: AppSupport.directory.appendingPathComponent("last-usage-report.json"))) : nil
         let initial = cached.flatMap { try? JSONDecoder().decode(UsageReport.self, from: $0) }?.accounts?["Codex"] ?? []
-        try? CodexSessionOrigins.prepare()
         return CodexUsageProvider(readLimits: {
             guard let executable = CodexLocator.find() else {
                 throw UsageProviderError(L10n.text("安装并登录后即可读取额度", "Install and sign in to read quota"))
@@ -86,12 +80,11 @@ public actor CodexUsageProvider: UsageProvider, LedgerRecording {
            piHome: piHome,
            identityCacheURL: persistent ? AppSupport.directory.appendingPathComponent("codex-identities.json") : nil,
            readLoginAt: { $0 == piHome ? CodexLoginTime.pi(in: pi.directory) : CodexLoginTime.native(in: directory) },
-           initialAccounts: initial, sessionOriginsDirectory: CodexSessionOrigins.directory,
-           readTerminalOrigins: { await CodexTerminalOrigins.read(threadIDs: $0, dataDirectory: directory) })
+           initialAccounts: initial)
     }
 
     public nonisolated var watchedDirectories: [URL]? {
-        transcripts.roots + (sessionOriginsDirectory.map { [$0] } ?? [])
+        transcripts.roots
     }
     public func fileChanges(_ paths: Set<String>?) async { await transcripts.fileChanges(paths) }
     // Pi and other clients can spend the same account without writing Codex rollouts.
@@ -204,17 +197,6 @@ public actor CodexUsageProvider: UsageProvider, LedgerRecording {
         let now = clock()
         let weekAgo = now.addingTimeInterval(-AlertPolicy.insightsLookback)
         let indexed = await transcripts.index(since: min(weekAgo, now.addingTimeInterval(-Double(historyHours) * 3600)))
-        let terminalOrigins = await readTerminalOrigins(Set(indexed.sessions.compactMap(\.transcript.id)))
-        let origins = sessionOriginsDirectory.map { CodexSessionOrigins.read(directory: $0) } ?? [:]
-        func navigationTarget(for transcript: CodexTranscript) -> SessionNavigationTarget? {
-            if let id = transcript.id {
-                if let origin = origins[id] {
-                    return origin.host == .daemon ? terminalOrigins[id] : origin.target
-                }
-                if let target = terminalOrigins[id] { return target }
-            }
-            return transcript.navigationTarget
-        }
         let selected = accountReadings
         let native = readings[home]
         let windows = selected.flatMap { source, reading in
@@ -269,7 +251,7 @@ public actor CodexUsageProvider: UsageProvider, LedgerRecording {
                                tokensOut: t.outputTokens, client: t.client, transcriptPath: session.path,
                                cacheReadTokens: t.cachedInputTokens, observedAt: now, workingDirectory: t.cwd,
                                subagentTranscripts: descendants(of: id), agentName: t.agentName, subagentSessions: agents,
-                               lastActivityAt: t.lastEventAt, navigationTarget: navigationTarget(for: t))
+                               lastActivityAt: t.lastEventAt, navigationTarget: t.navigationTarget)
         }
         let sessions = indexed.sessions.filter { !$0.transcript.isSubagent && !$0.transcript.isInternal }.map { session in
             (session: session, live: SessionPhase.read(session.transcript.evidence, rule: .rollout, at: now).inFlight)
@@ -309,7 +291,6 @@ public actor CodexUsageProvider: UsageProvider, LedgerRecording {
             (session.transcript.completions ?? []).map { completion in
                 var named = completion
                 named.task = session.title ?? completion.task
-                named.navigationTarget = navigationTarget(for: session.transcript)
                 return named
             }
         }

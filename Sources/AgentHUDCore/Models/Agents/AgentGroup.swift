@@ -19,7 +19,7 @@ public extension Array where Element == AgentDescriptor {
         return order.map { AgentGroup(id: $0, agents: groups[$0]!) }
     }
 
-    /// Keep every agent's models together in the same flat order used by the glow.
+    /// Keep every agent's models together in the same flat order the panel uses.
     var groupedAgentOrder: [AgentDescriptor] { agentGroups.flatMap(\.agents) }
 
     func movingGroup(id: String, to targetID: String) -> [AgentDescriptor] {

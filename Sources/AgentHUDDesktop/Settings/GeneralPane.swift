@@ -35,19 +35,6 @@ struct GeneralPane: View {
             }
             SettingsSection(title: L10n.text("客户端", "Clients"), theme: theme) {
                 ClientHooksSetting(settings: settings)
-                SettingsDivider(theme: theme)
-                SettingRow(label: L10n.text("等待回答", "Wait for an answer"),
-                           subtitle: L10n.text("到时没回答的权限请求交还客户端，由它自己询问。",
-                                               "After this, an unanswered permission request goes back to the client's own prompt.")) {
-                    Picker(L10n.text("等待回答", "Wait for an answer"), selection: settings.binding(\.approvalWaitMinutes)) {
-                        ForEach(Settings.approvalWaitChoices, id: \.self) { minutes in
-                            Text(L10n.text("\(minutes) 分钟", minutes == 1 ? "1 minute" : "\(minutes) minutes")).tag(minutes)
-                        }
-                    }
-                    .labelsHidden().pickerStyle(.menu)
-                    .accessibilityIdentifier("general-approval-wait")
-                }
-                .disabled(!settings.settings.clientHooks)
             }
         }
     }
@@ -60,8 +47,8 @@ private struct ClientHooksSetting: View {
 
     var body: some View {
         SettingRow(label: L10n.text("客户端回调", "Client hooks"),
-                   subtitle: L10n.text("写入各客户端的设置，用来在 HUD 上回答权限请求、显示完成与等待批准。",
-                                       "Added to each client's settings so the HUD can answer permission requests and show completions and waiting.")) {
+                   subtitle: L10n.text("写入各客户端的设置，让面板知道哪些会话在等待批准、哪些回合已经结束。",
+                                       "Added to each client's settings so the panel knows which sessions wait for approval and which turns have ended.")) {
             Toggle(L10n.text("客户端回调", "Client hooks"), isOn: Binding(get: {
                 settings.settings.clientHooks && !confirming
             }, set: { value in
@@ -77,21 +64,17 @@ private struct ClientHooksSetting: View {
             Text(L10n.text(
                 """
                 Agent HUD 会从各客户端的设置中移除自己添加的回调，之后也不再写回。关闭后将失去：
-                · 在 HUD 上回答 Claude Code、Codex、CodeBuddy、WorkBuddy、ZCode、Qwen Code 与 Qoder 的权限请求
-                · 在 HUD 上回答兼容的 DeepSeek Harness 网页端提问
-                · Antigravity、Cursor、GitHub Copilot CLI、CodeBuddy、Qwen Code 与 OpenCode 的完成提醒
                 · Claude Code 会话的等待批准状态
-                · Pi 的运行状态与完成提醒
-                用量、额度与会话统计不受影响。重新开启后，Codex 需要在 /hooks 中再次信任。
+                · GitHub Copilot CLI 的回合结束信号：会话要安静一段时间后才显示为结束
+                · Pi 会话的运行状态，以及 OpenCode 插件补充的会话信息
+                用量、额度与会话统计不受影响。
                 """,
                 """
                 Agent HUD removes the hooks it added to each client's settings and stops adding them back. You lose:
-                • Answering permission requests from Claude Code, Codex, CodeBuddy, WorkBuddy, ZCode, Qwen Code and Qoder on the HUD
-                • Answering questions from compatible DeepSeek Harness web hosts on the HUD
-                • Completion reminders for Antigravity, Cursor, GitHub Copilot CLI, CodeBuddy, Qwen Code and OpenCode
                 • The waiting-for-approval state of Claude Code sessions
-                • Running status and completion reminders for Pi
-                Usage, quota and session statistics are unaffected. Turned back on, Codex asks you to trust its hook again in /hooks.
+                • The end of each GitHub Copilot CLI turn: its sessions show as ended only after a quiet spell
+                • Running status for Pi sessions, and the session details OpenCode's plugin adds
+                Usage, quota and session statistics are unaffected.
                 """))
         }
     }

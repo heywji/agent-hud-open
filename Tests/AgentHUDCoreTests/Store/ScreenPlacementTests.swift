@@ -35,28 +35,16 @@ final class ScreenPlacementTests: XCTestCase {
         XCTAssertEqual(SettingsStore(defaults: defaults).settings.screens, placements)
     }
 
-    func testSimpleModeSettingsDecodeWithinTheirBoundsAndDefaultWhenAbsent() throws {
+    func testAFullerBuildsSimplePanelReadsAsTheLogoQueue() throws {
         let saved = try JSONDecoder().decode(ScreenPlacement.self, from: Data(
-            #"{"mode":"simple","edge":"left","simpleSize":100,"ringWidth":0.2,"showsRings":false}"#.utf8))
-        XCTAssertEqual(saved.mode, .simple)
+            #"{"mode":"simple","edge":"left","logoSize":24,"simpleSize":100,"ringWidth":0.2,"showsRings":false,"separatesAgents":true}"#.utf8))
+        XCTAssertEqual(saved.mode, .logos)
         XCTAssertEqual(saved.edge, .left)
-        XCTAssertEqual(saved.simpleSize, 40)
-        XCTAssertEqual(saved.ringWidth, 1)
-        XCTAssertFalse(saved.showsRings)
-        XCTAssertTrue(saved.showsNumbers)
-        XCTAssertFalse(saved.simpleBots)
-        let lively = try JSONDecoder().decode(ScreenPlacement.self, from: Data(#"{"mode":"simple","simpleBots":true}"#.utf8))
-        XCTAssertTrue(lively.simpleBots)
-
-        let older = try JSONDecoder().decode(ScreenPlacement.self, from: Data(#"{"mode":"logos","logoSize":24}"#.utf8))
-        XCTAssertEqual(older.simpleSize, 22)
-        XCTAssertEqual(older.ringWidth, 1.5)
-        XCTAssertTrue(older.showsRings)
-        XCTAssertTrue(older.showsNumbers)
+        XCTAssertEqual(saved.logoSize, 24)
         XCTAssertEqual(try JSONDecoder().decode(ScreenPlacement.self, from: JSONEncoder().encode(saved)), saved)
     }
 
-    func testOnlyTheNotchIsNotDocked() {
-        XCTAssertEqual(HUDMode.allCases.filter(\.isDocked), [.logos, .simple])
+    func testOnlyTheLogoQueueIsDocked() {
+        XCTAssertEqual(HUDMode.allCases.filter(\.isDocked), [.logos])
     }
 }

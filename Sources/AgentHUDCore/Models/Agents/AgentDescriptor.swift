@@ -1,6 +1,6 @@
 import Foundation
 
-/// One monitored agent/model row, e.g. "Claude · Opus 4.5". Order in the stored array is the glow order (left → right).
+/// One monitored agent/model row, e.g. "Claude · Opus 4.5". Order in the stored array is the panel's order.
 public struct AgentDescriptor: Hashable, Codable, Sendable, Identifiable {
     public let id: String
     public let vendor: String

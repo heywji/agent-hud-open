@@ -30,16 +30,12 @@ final class RestartCopyTests: XCTestCase {
         /// Each vendor's own notice.
         var vendorNotices: [String?]
         var levels: [StatusLevel?]
-        /// Quota levels and the balance's, in glow order.
-        var glow: [StatusLevel]
+        /// Quota levels and the balance's, in row order.
+        var allLevels: [StatusLevel]
         var menuFigure: Double?
         var statuses: [String?]
         var resets: [String]
         var hints: [String?]
-        /// Whether quota alerts take each row's reading as the baseline for the next.
-        var alertBaselines: [Bool]
-        /// Whether reset credits take each Codex account's reading as the baseline for the next.
-        var creditBaselines: [Bool]
     }
 
     @MainActor
@@ -109,9 +105,7 @@ final class RestartCopyTests: XCTestCase {
 
     // MARK: Fixtures
 
-    private var later: Date { now.addingTimeInterval(300) }
-
-    /// Quota rows in settings order, then the DeepSeek row whose balance the glow shows.
+    /// Quota rows in settings order, then the DeepSeek row whose balance the panel shows.
     private var rows: [AgentDescriptor] {
         [AgentDescriptor(id: native.windowID("codex"), vendor: "Codex", model: "5h", source: "", enabled: true, account: native),
          AgentDescriptor(id: pi.windowID("codex"), vendor: "Codex", model: "5h", source: "", enabled: true, account: pi),
@@ -172,24 +166,11 @@ final class RestartCopyTests: XCTestCase {
         store.replace(report: report)
         store.now = now
         let quota = rows.filter { !$0.isAPIBilled }
-        var alerts = QuotaAlertTracker(), resets = ResetCreditTracker()
-        _ = alerts.update(report: report, agents: rows, now: now)
-        _ = resets.update(report: report, now: now)
-        // A clean, critical reading of every row with more reset credits raises an alert or a grant only where the
-        // reading before it was taken as a baseline.
-        let next = UsageReport(generatedAt: later, snapshots: quota.map {
-            UsageSnapshot(agentId: $0.id, remainingPct: 5, resetAt: now.addingTimeInterval(2 * 3600), windowDuration: 5 * 3600, updatedAt: later)
-        }, sessions: [], discoveredAgents: rows, accounts: Dictionary(grouping: Set(quota.compactMap(\.account)), by: \.provider).mapValues {
-            $0.map { AccountObservation(account: $0, observedAt: later, resetCredits: CodexResetCredits(availableCount: 9, credits: nil)) }
-        })
-        let crossed = alerts.update(report: next, agents: rows, now: later).criticalAgentIDs
-        let granted = Set(resets.update(report: next, now: later).map(\.account.account.id))
         return Answers(notices: quota.map { report.quotaNotice(for: $0) },
                        vendorNotices: ["Codex", "Grok", "Cursor", "Kimi", "DeepSeek"].map { report.quotaNotice(vendor: $0) },
-                       levels: store.rows.map(\.level), glow: store.levels, menuFigure: store.maxUsedPct,
+                       levels: store.rows.map(\.level), allLevels: store.levels, menuFigure: store.maxUsedPct,
                        statuses: store.rows.map { $0.account?.statusLabel(now: now) }, resets: store.rows.map { $0.resetLabel(now: now) },
-                       hints: quota.map { store.quotaForecastHint(for: $0.id) }, alertBaselines: quota.map { crossed.contains($0.id) },
-                       creditBaselines: [native, pi].map { granted.contains($0.id) })
+                       hints: quota.map { store.quotaForecastHint(for: $0.id) })
     }
 }
 

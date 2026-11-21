@@ -96,7 +96,7 @@ public struct UsageReport: Hashable, Codable, Sendable {
     /// Every model's tokens today and over the last seven and thirty days; `usage` covers only the charts' week.
     public let periods: UsagePeriods?
     /// When a provider last reported each row of `discoveredAgents`, in reports kept across passes; a single read and the
-    /// demo have none. Rows it does not list are not shown, and a row unseen for the retention period leaves the report.
+    /// sample data have none. Rows it does not list are not shown, and a row unseen for the retention period leaves the report.
     public let rowSeenAt: [String: Date]?
 
     public init(

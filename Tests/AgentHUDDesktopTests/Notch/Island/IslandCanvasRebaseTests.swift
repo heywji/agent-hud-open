@@ -12,7 +12,7 @@ final class IslandCanvasRebaseTests: XCTestCase {
         let collapsedSize = CGSize(width: 216, height: 32)
         var root = IslandRootView(store: nil, isOpen: true, collapsedSize: collapsedSize,
                                   collapsedTopRadius: 16, collapsedBottomRadius: 12,
-                                  lightBorder: false, onOpenStats: {})
+                                  lightBorder: false)
         root.presentationSize = canvas.size
         root.presentationFrame = CGRect(origin: .zero, size: canvas.size)
         root.animatesGeometry = false
@@ -23,7 +23,7 @@ final class IslandCanvasRebaseTests: XCTestCase {
 
         root = IslandRootView(store: nil, isOpen: false, collapsedSize: collapsedSize,
                               collapsedTopRadius: 16, collapsedBottomRadius: 12,
-                              lightBorder: false, onOpenStats: {})
+                              lightBorder: false)
         root.animatesGeometry = true
         root.presentationSize = collapsedSize
         root.presentationFrame = CGRect(x: (canvas.width - collapsedSize.width) / 2, y: 0,
@@ -54,7 +54,7 @@ final class IslandCanvasRebaseTests: XCTestCase {
         let collapsed = CGRect(x: -20000, y: -20000, width: 216, height: 32)
         var root = IslandRootView(store: nil, isOpen: false, collapsedSize: collapsed.size,
                                   collapsedTopRadius: 16, collapsedBottomRadius: 12,
-                                  lightBorder: false, onOpenStats: {})
+                                  lightBorder: false)
         root.presentationSize = collapsed.size
         root.presentationFrame = CGRect(origin: .zero, size: collapsed.size)
         root.animatesGeometry = true
@@ -96,7 +96,6 @@ final class IslandCanvasRebaseTests: XCTestCase {
                 $0.requiresOptionToOpen = false
             }
             let store = UsageStore(provider: DemoUsageProvider(), settings: settings, accessAllowed: { false })
-            store.glowHidden = true
             let now = Date()
             store.replace(report: UsageReport(generatedAt: now, snapshots: agents.map {
                 UsageSnapshot(agentId: $0.id, remainingPct: 50, resetAt: now.addingTimeInterval(3600),

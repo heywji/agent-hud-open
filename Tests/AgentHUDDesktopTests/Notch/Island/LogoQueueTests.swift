@@ -4,7 +4,7 @@ import XCTest
 
 final class LogoQueueTests: XCTestCase {
     @MainActor
-    func testGrokClientsUseDifferentMarksAndKeepTheirOwnWorkingState() throws {
+    func testGrokClientsUseDifferentMarks() throws {
         let cli = try XCTUnwrap(AgentArtwork.image(for: "Grok CLI", dark: true))
         let bot = try XCTUnwrap(AgentArtwork.image(for: "Grok Bot", dark: true))
         XCTAssertTrue(cli.isTemplate)
@@ -16,6 +16,5 @@ final class LogoQueueTests: XCTestCase {
 
         let items = LogoQueueItem.queue(rows: [("Grok CLI", false), ("Grok Bot", true), ("Grok CLI", false)])
         XCTAssertEqual(items.map(\.vendor), ["Grok CLI", "Grok Bot"])
-        XCTAssertEqual(items.map(\.isWorking), [false, true])
     }
 }

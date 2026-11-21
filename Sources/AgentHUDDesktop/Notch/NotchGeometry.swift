@@ -4,7 +4,7 @@ import AgentHUDCore
 /// Where the HUD sits on one screen, in global screen coordinates.
 ///
 /// In notch mode the collapsed rect is the physical notch, or a bar standing in for one on a display
-/// without. In a docked mode it is the strip the logo queue or the Simple panel takes, parked along an edge
+/// without. In the docked mode it is the strip the logo queue takes, parked along an edge
 /// at the placement's offset.
 struct NotchGeometry: Equatable {
     let screenFrame: CGRect

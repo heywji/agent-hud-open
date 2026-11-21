@@ -631,7 +631,7 @@ final class AdditionalProviderTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testOnlyAFailedQuotaReadHoldsBackAlertsAndLevels() async throws {
+    func testOnlyAFailedQuotaReadHoldsBackLevels() async throws {
         final class Readings: @unchecked Sendable {
             var remaining: [Double?], now: Date
             init(_ remaining: [Double?], now: Date) { self.remaining = remaining; self.now = now }
@@ -644,16 +644,13 @@ final class AdditionalProviderTests: XCTestCase, @unchecked Sendable {
            readCompletions: { _ in throw ProviderFailure.local }, clock: { readings.now }))
         let suite = "AdditionalProviderTests.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        var tracker = QuotaAlertTracker()
         let first = try await provider.fetchAccountAndLocalUsage(agents: [], historyHours: 48)
         let row = try XCTUnwrap(first.discoveredAgents.first)
         let store = UsageStore(provider: DemoUsageProvider(), settings: SettingsStore(defaults: defaults, defaultAgents: [row]))
-        _ = tracker.update(report: first, agents: [row], now: readings.now)
 
         readings.now = now.addingTimeInterval(UsageRefresh.accountRequestSpacing)
         let low = try await provider.fetchAccountAndLocalUsage(agents: [], historyHours: 48)
         XCTAssertEqual(low.sourceNotices["Cursor"]?.hasPrefix("Cursor usage events could not be read · "), true, "local and hook notices stay shown")
-        XCTAssertEqual(tracker.update(report: low, agents: [row], now: readings.now).criticalAgentIDs, [row.id])
         store.replace(report: low)
         store.now = readings.now
         XCTAssertEqual(store.rows.map(\.level), [.critical])
@@ -666,7 +663,7 @@ final class AdditionalProviderTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(low.readingIssues?["Cursor"], "a notice about the client's logs is not an issue with its reading")
         store.replace(report: failed)
         store.now = readings.now
-        XCTAssertEqual(store.rows.map(\.level), [nil], "a failed read still takes the window out of the glow")
+        XCTAssertEqual(store.rows.map(\.level), [nil], "a failed read takes the window's level away")
     }
 
     func testInstalledGrokLocalUsageReadOnlyProbe() throws {

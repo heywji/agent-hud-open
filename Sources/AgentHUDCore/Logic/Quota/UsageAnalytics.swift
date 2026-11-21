@@ -84,14 +84,4 @@ public enum UsageAnalytics {
         }
         return CapStats(hits: hits, totalWait: total, longestWait: longest, longestAt: longestAt)
     }
-
-    /// 7 × 24 grid (Mon → Sun) of 15-minute buckets that end after `since`, by the local hour each bucket starts in.
-    public static func activityGrid(usage: [UsageBucket], since: Date, calendar: Calendar, dimensions: TokenDimensions = .fresh) -> ActivityGrid {
-        var cells = Array(repeating: Array(repeating: [String: Int](), count: 24), count: 7)
-        for bucket in usage where bucket.end > since {
-            let row = (calendar.component(.weekday, from: bucket.start) + 5) % 7 // Monday = 0
-            cells[row][calendar.component(.hour, from: bucket.start)][bucket.agentId, default: 0] += dimensions.count(bucket)
-        }
-        return ActivityGrid(tokensByModel: cells)
-    }
 }

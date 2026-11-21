@@ -65,10 +65,6 @@ final class CompletionHooksTests: XCTestCase, @unchecked Sendable {
             .sorted { $0.completedAt < $1.completedAt }
         XCTAssertEqual(events.map(\.completedAt), [now, now.addingTimeInterval(5)])
         XCTAssertEqual(events[0].sessionID, "antigravity:s")
-        XCTAssertEqual(events[0].navigationTarget, .antigravityConversation(id: "s"))
-        let saved = try Data(contentsOf: directory.appendingPathComponent("antigravity/\(events[0].id).json"))
-        XCTAssertNil(try JSONDecoder().decode(SessionCompletion.self, from: saved).navigationTarget,
-                     "the local reader reconstructs the destination; completion reports never encode it")
         XCTAssertEqual(events[0].model, "gemini-test")
         XCTAssertEqual(events[0].task, "Antigravity · project")
         payload["fullyIdle"] = false
@@ -103,12 +99,7 @@ final class CompletionHooksTests: XCTestCase, @unchecked Sendable {
             readSessions: { _ in ProviderSessions() }, history: QuotaHistoryStore(),
             readCompletions: { _ in events }, clock: { self.now })
         let report = try await provider.fetchAccountAndLocalUsage(agents: [], historyHours: 168)
-        let agents: [AgentDescriptor] = []
-        var tracker = IslandEventTracker(startedAt: now.addingTimeInterval(-1))
-        XCTAssertEqual(tracker.update(report: report, agents: agents, now: now).completions.count, 1)
-        XCTAssertTrue(tracker.update(report: report, agents: agents, now: now).completions.isEmpty)
-        var restarted = IslandEventTracker(startedAt: now.addingTimeInterval(1))
-        XCTAssertTrue(restarted.update(report: report, agents: agents, now: now.addingTimeInterval(2)).completions.isEmpty)
+        XCTAssertEqual(report.completions.map(\.id), events.map(\.id), "the stop the hook recorded reaches the report once")
     }
 
     func testTheRunningAppTakesOverAHandlerAnotherCopyWrote() throws {

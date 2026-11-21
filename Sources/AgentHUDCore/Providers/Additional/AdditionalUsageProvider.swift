@@ -122,15 +122,6 @@ actor AdditionalUsageProvider: UsageProvider, LedgerRecording {
         let now = clock(), weekAgo = now.addingTimeInterval(-AlertPolicy.insightsLookback)
         let since = min(weekAgo, now.addingTimeInterval(-Double(historyHours) * 3600))
         var local = await readSessions(since)
-        if source == .grok {
-            let targets = GrokSessionOrigins.read(sessionIDs: Set(local.sessions.filter { $0.client == "Grok CLI" }.map(\.id)))
-            for index in local.sessions.indices where local.sessions[index].client == "Grok CLI" {
-                local.sessions[index].navigationTarget = targets[local.sessions[index].id]
-                for completion in local.sessions[index].completions.indices {
-                    local.sessions[index].completions[completion].navigationTarget = targets[local.sessions[index].id]
-                }
-            }
-        }
         var hookCompletions: [SessionCompletion] = [], hookNotice: String?
         do { hookCompletions = try readCompletions(since) }
         catch { hookNotice = L10n.text("完成提醒记录读取失败", "Turn completion records could not be read") }

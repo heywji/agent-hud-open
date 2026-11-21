@@ -122,14 +122,6 @@ public struct LiveSession: Hashable, Codable, Sendable, Identifiable {
         (subagentSessions ?? []).flatMap { [$0] + $0.descendantSessions }
     }
 
-    /// The working directory with the home folder written as `~`, or the project's name where only that is known.
-    public var displayPath: String? {
-        guard let workingDirectory else { return terminal }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        if workingDirectory == home { return "~" }
-        return workingDirectory.hasPrefix(home + "/") ? "~" + workingDirectory.dropFirst(home.count) : workingDirectory
-    }
-
     /// When this session last did something, given the newest turn event its source reported for it. A source that
     /// reports no turns leaves the session's own end, or — while it runs — when its log last recorded anything, else the
     /// reading that last saw it running.

@@ -106,7 +106,6 @@ final class AccountVisibilityTests: XCTestCase {
         let report = quotaReport()
         let provider = RecordingProvider(report: report)
         let store = UsageStore(provider: provider, settings: settings)
-        store.tokenDimensions = .fresh
         await store.refresh()
         let received = await provider.receivedAgents
         XCTAssertEqual(received.map(\.id), quotaAgents.map(\.id), "Collection receives every window, including hidden accounts")
@@ -117,30 +116,24 @@ final class AccountVisibilityTests: XCTestCase {
         XCTAssertTrue(store.rows.isEmpty)
         XCTAssertTrue(settings.agents.allSatisfy { !$0.enabled }, "A new reading cannot switch hidden windows back on")
         store.now = now
-        XCTAssertEqual(store.tokenColumns.map(\.total).reduce(0, +), 1650)
-        XCTAssertEqual(store.agentUsage.reduce(0) { $0 + store.tokenDimensions.count($1.tokens) }, 1650)
+        XCTAssertEqual(store.hudTokenColumns.map(\.total).reduce(0, +), 1700, "every kind, cache reads included")
     }
 
     func testQuotaVisibilityFiltersPresentationAndKeepsAllTokenAndSessionStatistics() throws {
         let settings = SettingsStore(defaults: try makeDefaults(), defaultAgents: quotaAgents)
         let store = UsageStore(provider: NoReadProvider(), settings: settings)
-        store.tokenDimensions = .fresh
         let report = quotaReport()
         store.replace(report: report)
         store.now = now
         let originalRows = store.rows
-        let originalColumns = store.tokenColumns
-        let originalUsage = store.agentUsage
-        let originalCost = store.statsListCost
-        let originalCards = store.shownAgents
+        let originalColumns = store.hudTokenColumns
         let originalSessions = store.sessions
         let originalLiveSessions = store.liveSessions
         let originalWindows = settings.agents
         XCTAssertEqual(originalRows.map(\.id), [work.windowID("codex"), personal.windowID("codex")])
         XCTAssertEqual(store.levels.count, 2)
-        XCTAssertEqual(originalColumns.map(\.total).reduce(0, +), 1650)
+        XCTAssertEqual(originalColumns.map(\.total).reduce(0, +), 1700)
         XCTAssertEqual(originalSessions.count, 2, "Local use with no account is included")
-        XCTAssertNotNil(originalCost)
 
         settings.setAccount(id: work.id, visible: false)
         XCTAssertEqual(store.rows.map(\.id), [personal.windowID("codex")])
@@ -150,10 +143,7 @@ final class AccountVisibilityTests: XCTestCase {
         XCTAssertEqual(store.visibleAgents.map(\.enabled), [false, false, true])
         XCTAssertEqual(store.enabledAgents.map(\.id), [personal.windowID("codex")])
         XCTAssertEqual(store.report, report)
-        XCTAssertEqual(store.tokenColumns, originalColumns)
-        XCTAssertEqual(store.agentUsage, originalUsage)
-        XCTAssertEqual(store.statsListCost, originalCost)
-        XCTAssertEqual(store.shownAgents, originalCards)
+        XCTAssertEqual(store.hudTokenColumns, originalColumns)
         XCTAssertEqual(store.sessions, originalSessions)
         XCTAssertEqual(store.liveSessions, originalLiveSessions)
         let group = try XCTUnwrap(AgentSettingsGroup.make(sources: [], agents: settings.agents, report: report).first)
@@ -164,17 +154,16 @@ final class AccountVisibilityTests: XCTestCase {
         settings.setAccount(id: personal.id, visible: false)
         XCTAssertTrue(store.rows.isEmpty)
         XCTAssertTrue(store.levels.isEmpty)
-        XCTAssertTrue(store.alertPulseVendors.isEmpty)
         XCTAssertEqual(group.displayedCount(settings: settings.settings), 0)
         XCTAssertEqual(group.accounts.count, 2, "All hidden accounts remain available to restore in Settings")
-        XCTAssertEqual(store.tokenColumns, originalColumns)
+        XCTAssertEqual(store.hudTokenColumns, originalColumns)
         XCTAssertEqual(store.sessions, originalSessions)
         settings.setAccount(id: work.id, visible: true)
         settings.setAccount(id: personal.id, visible: true)
         XCTAssertEqual(settings.agents.map(\.id), originalWindows.map(\.id))
         XCTAssertTrue(settings.agents.allSatisfy(\.enabled))
         XCTAssertEqual(store.rows.map(\.id), originalWindows.map(\.id), "Restoring also enables the account's weekly window")
-        XCTAssertEqual(store.tokenColumns, originalColumns)
+        XCTAssertEqual(store.hudTokenColumns, originalColumns)
         XCTAssertEqual(store.sessions, originalSessions)
     }
 

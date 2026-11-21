@@ -16,8 +16,6 @@ final class DockDraggingTests: XCTestCase {
         var presses = 0
         var releases = 0
         var ends = 0
-        var clicks = 0
-        drag.onClick = { clicks += 1 }
         var starts: [CGPoint] = []
         var movements: [CGPoint] = []
         drag.onPress = { presses += 1 }
@@ -63,7 +61,6 @@ final class DockDraggingTests: XCTestCase {
         XCTAssertEqual(releases, 2)
         XCTAssertEqual(starts.count, 1)
         XCTAssertEqual(ends, 1, "A click that never crosses the threshold must not commit a drag")
-        XCTAssertEqual(clicks, 1, "Only the press that never became a pick-up counts as a click")
         XCTAssertFalse(drag.isPressed)
         XCTAssertEqual(outline.opacity, 0)
     }
@@ -107,31 +104,6 @@ final class DockDraggingTests: XCTestCase {
         XCTAssertFalse(drag.isArmed)
         XCTAssertEqual(outline.opacity, 0)
         XCTAssertEqual(starts, 1)
-    }
-
-    @MainActor
-    func testSimplePanelOutlineFollowsThePanelOnEveryEdge() {
-        let screen = CGRect(x: 0, y: 0, width: 1600, height: 900)
-        for edge in HUDEdge.allCases {
-            let strip = edge.isHorizontal ? CGSize(width: 180, height: 37) : CGSize(width: 37, height: 180)
-            let rect = NotchGeometry.stripRect(queue: strip, frame: screen, placement: ScreenPlacement(edge: edge, offset: 0.5))
-            let geometry = NotchGeometry(screenFrame: screen, mode: .simple, edge: edge, hasNotch: false,
-                                         rect: rect, cornerRadius: 10, backingScale: 2, menuBarHeight: 32)
-            let outline = ScreenHUD.dragOutline(for: geometry, panelRadius: 17)
-            XCTAssertEqual(outline.radius, 19, "\(edge): the dashes keep the panel's curve")
-            XCTAssertEqual(min(outline.rect.width, outline.rect.height), 38, "\(edge): 34 pt panel plus the gap on both sides")
-            XCTAssertEqual(max(outline.rect.width, outline.rect.height), 184)
-            XCTAssertTrue(screen.insetBy(dx: 1, dy: 1).contains(outline.rect), "\(edge): the stroke stays clear of the screen edge")
-            let surface = ScreenHUD.dragSurfaceFrame(for: geometry, outline: outline.rect)
-            XCTAssertTrue(surface.contains(outline.rect))
-            XCTAssertTrue(screen.contains(surface))
-
-            let drag = HUDDragWindowController()
-            drag.show(frame: surface, outline: outline)
-            defer { drag.hide() }
-            let drawn = drag.outlineBounds.offsetBy(dx: surface.minX, dy: surface.minY)
-            assertFrame(drawn, equals: outline.rect, "\(edge): the dashes are drawn where the panel is")
-        }
     }
 
     @MainActor

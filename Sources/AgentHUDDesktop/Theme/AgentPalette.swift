@@ -1,6 +1,6 @@
 import AgentHUDCore
 
-/// Per-agent colors used in the stats window (distinct from the status colors).
+/// Per-agent colors of the panel's token chart and session dots (distinct from the status colors).
 public enum AgentPalette {
     public static let colors: [RGBA] = [
         RGBA(hex: 0xc084fc), // Opus

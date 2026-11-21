@@ -43,15 +43,6 @@ enum ScreenIdentity {
 
     static func hasNotch(_ screen: NSScreen) -> Bool { screen.safeAreaInsets.top > 0 }
 
-    /// The notch's own size, for previews that should show this machine's shape rather than a stand-in.
-    static func notchSize(of screen: NSScreen) -> CGSize? {
-        guard hasNotch(screen) else { return nil }
-        let frame = screen.frame
-        let left = screen.auxiliaryTopLeftArea?.maxX ?? (frame.midX - NotchGeometry.fallbackWidth / 2)
-        let right = screen.auxiliaryTopRightArea?.minX ?? (frame.midX + NotchGeometry.fallbackWidth / 2)
-        return CGSize(width: max(1, right - left), height: screen.safeAreaInsets.top)
-    }
-
     /// The stored placement for a screen, or the default its hardware deserves.
     @MainActor
     static func placement(for screen: NSScreen, in settings: AgentHUDCore.Settings) -> ScreenPlacement {

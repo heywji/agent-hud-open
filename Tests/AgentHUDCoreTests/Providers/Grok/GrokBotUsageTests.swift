@@ -60,10 +60,6 @@ final class GrokBotUsageTests: XCTestCase {
             XCTAssertEqual(Set(calls.map(\.source)), ["cursor"])
             XCTAssertEqual(Set(calls.map(\.log)), [billingID])
 
-            let turns = GrokBotConversation.turns(at: fixture.transcript, sessionID: session.id,
-                                                   since: .distantPast, limit: 10, now: now)
-            XCTAssertEqual(turns.first?.prompt, "Synthetic prompt")
-            XCTAssertEqual(turns.first?.reply, "Synthetic reply")
             let restored = try JSONDecoder().decode(LiveSession.self, from: JSONEncoder().encode(session))
             XCTAssertEqual(restored.usageKey, billingID, "the own-usage reference survives the restart report")
         }

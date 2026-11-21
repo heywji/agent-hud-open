@@ -15,8 +15,6 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
     private let transcripts: ClaudeTranscriptStore
     private let history: QuotaHistoryStore
     private let accountProfileURL: URL?
-    private let sessionOriginsDirectory: URL?
-    private let desktopSessions: ClaudeDesktopSessions?
     /// `ClientHome.key` of the configuration directory, separating unidentified logins of different homes.
     private let home: String
     private let clock: @Sendable () -> Date
@@ -27,8 +25,6 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
         history: QuotaHistoryStore,
         accountProfileURL: URL? = nil,
         home: String = "",
-        sessionOriginsDirectory: URL? = nil,
-        desktopSessions: ClaudeDesktopSessions? = nil,
         clock: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.engine = engine
@@ -36,16 +32,13 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
         self.history = history
         self.accountProfileURL = accountProfileURL
         self.home = home
-        self.sessionOriginsDirectory = sessionOriginsDirectory
-        self.desktopSessions = desktopSessions
         self.clock = clock
     }
 
     /// Production wiring: the engine binary if present, plus the usage ledger. `persistent` false imports no earlier
     /// version's quota history.
     public static func standard(ledger: UsageLedger, persistent: Bool = true) -> ClaudeCodeProvider {
-        try? ClaudeSessionOrigins.prepare()
-        return ClaudeCodeProvider(
+        ClaudeCodeProvider(
             engine: ClaudeEngineLocator.find().map {
                 ClaudeEngineUsageClient(executable: $0, workingDirectory: ClaudeEngineUsageClient.defaultWorkingDirectory)
             },
@@ -53,14 +46,12 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
             history: QuotaHistoryStore(ledger: ledger, scope: "claude",
                                        importing: persistent ? AppSupport.directory.appendingPathComponent("quota-history.json") : nil),
             accountProfileURL: ClaudeSubscription.accountProfileURL,
-            home: ClaudeSubscription.home,
-            sessionOriginsDirectory: ClaudeSessionOrigins.directory,
-            desktopSessions: ClaudeDesktopSessions()
+            home: ClaudeSubscription.home
         )
     }
 
     public var watchedDirectories: [URL]? {
-        transcripts.roots + [AttentionHooks.directory] + (sessionOriginsDirectory.map { [$0] } ?? []) + (desktopSessions?.roots ?? [])
+        transcripts.roots + [AttentionHooks.directory]
     }
     public func fileChanges(_ paths: Set<String>?) async { await transcripts.fileChanges(paths) }
 
@@ -178,36 +169,6 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
                 }
             }
         }
-        // Origin hooks can arrive while ledger reads suspend this fetch. Use the latest source for both reports.
-        let desktopTargets = await desktopSessions?.targets(sessionIDs: Set(candidates.map { $0.session.id })) ?? [:]
-        let origins = sessionOriginsDirectory.map { ClaudeSessionOrigins.read(directory: $0) } ?? [:]
-        func desktopTarget(for id: String, host: ClaudeSessionOrigins.Host) -> SessionNavigationTarget? {
-            switch (host, desktopTargets[id]) {
-            case (.desktop, .some(.claudeDesktopSession(id: _))), (.cowork, .some(.claudeCoworkSession(id: _))): return desktopTargets[id]
-            default: return nil
-            }
-        }
-        func navigationTarget(for session: TranscriptSession) -> SessionNavigationTarget? {
-            if let origin = origins[session.id] {
-                if session.lastActivityAt > origin.at, let entrypoint = session.entrypoint, !entrypoint.isEmpty {
-                    let sameSurface: Bool
-                    if entrypoint == "cli" { sameSurface = origin.host == .cli }
-                    else if let desktopHost = ClaudeSessionOrigins.desktopHost(entrypoint) { sameSurface = origin.host == desktopHost }
-                    else { sameSurface = (origin.host == .cli || origin.host == .unsupported) && origin.target == nil }
-                    if !sameSurface {
-                        // Hooks can be disabled while a session resumes elsewhere. A newer transcript can clear an old host,
-                        // and Desktop has its own exact tab identity; a different CLI pane cannot be guessed from a transcript.
-                        return ClaudeSessionOrigins.desktopHost(entrypoint).flatMap { desktopTarget(for: session.id, host: $0) }
-                    }
-                }
-                switch origin.host {
-                case .cli: return origin.target
-                case .desktop, .cowork: return desktopTarget(for: session.id, host: origin.host)
-                case .unsupported: return nil
-                }
-            }
-            return ClaudeSessionOrigins.desktopHost(session.entrypoint).flatMap { desktopTarget(for: session.id, host: $0) }
-        }
         let listed = candidates.map { session, reading -> LiveSession in
             let live = reading.inFlight
             let share = windowTotal > 0 ? Double(windowTokens[session.path] ?? 0) / Double(windowTotal) : 0
@@ -226,8 +187,7 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
                 client: ClaudeEntrypoint.clientLabel(session.entrypoint),
                 transcriptPath: session.path,
                 cacheReadTokens: session.cacheReadTokens, observedAt: now, workingDirectory: session.cwd,
-                lastActivityAt: session.lastActivityAt,
-                navigationTarget: navigationTarget(for: session)
+                lastActivityAt: session.lastActivityAt
             )
         }
 
@@ -245,13 +205,7 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
             quotaNotices: failure.map { ["Claude": $0] } ?? [:],
             readingIssues: failure.map { ["Claude": .readFailed($0)] } ?? [:],
             consumerIdsByQuota: consumerIdsByQuota,
-            completions: sessions.flatMap { session in
-                session.completions.map { completion in
-                    var completion = completion
-                    completion.navigationTarget = navigationTarget(for: session)
-                    return completion
-                }
-            },
+            completions: sessions.flatMap(\.completions),
             turns: candidates.compactMap(\.reading.turn),
             // A confirmed login without plan limits has no current subscription account and retires earlier quota rows.
             accounts: reading.map { reading in

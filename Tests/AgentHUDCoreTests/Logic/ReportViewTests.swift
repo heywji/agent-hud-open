@@ -206,7 +206,6 @@ final class ReportViewTests: XCTestCase {
         XCTAssertEqual(view.rowGroups.map(\.rows), store.rowGroups.map(\.rows), name)
         XCTAssertEqual(view.billing, store.enabledBilling, name)
         XCTAssertEqual(view.levels, store.levels, name)
-        XCTAssertEqual(view.alertPulseVendors, store.alertPulseVendors, name)
         XCTAssertEqual(view.maxUsedPct, store.maxUsedPct, name)
         XCTAssertEqual(view.subscriptions, store.subscriptions, name)
         for group in store.rowGroups {

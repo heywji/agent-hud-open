@@ -39,7 +39,7 @@ extension Font {
     }
 }
 
-/// Design tokens for the dark and light window chrome. The island/glow always use `.island` (dark).
+/// Design tokens for the dark and light window chrome. The island always uses `.island` (dark).
 struct Theme {
     /// Chooses the status palette variant.
     private let isLight: Bool

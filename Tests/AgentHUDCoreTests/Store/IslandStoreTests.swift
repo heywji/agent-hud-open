@@ -74,7 +74,6 @@ final class IslandStoreTests: XCTestCase {
             accounts: ["Codex": [.init(account: current, observedAt: now), .init(account: old, observedAt: now, isCurrent: false)]]))
         store.now = now
 
-        XCTAssertEqual(store.alertPulseVendors, ["Claude", "Claude", "DeepSeek", "Codex"])
-        XCTAssertEqual(store.levels, [.ok, .ok, .warning, .critical], "a Codex alert lights the segment that shows Codex's colour")
+        XCTAssertEqual(store.levels, [.ok, .ok, .warning, .critical])
     }
 }

@@ -49,7 +49,6 @@ public enum OpenCodeSessionObserver {
         let turnID: String
         let startedAtMs: Int64
         let completedAtMs: Int64
-        var navigationTarget: SessionNavigationTarget? = nil
 
         var session: OpenAgentSession {
             let named = OpenAgentParser.openCodeTitle(title)
@@ -58,10 +57,8 @@ public enum OpenCodeSessionObserver {
                 titleSource: named == nil ? .placeholder : .observer, workspace: workspace, path: "",
                 start: RecordCoding.date(startedAtMs), end: RecordCoding.date(completedAtMs))
             if let model, let providerID { value.setModel(model, provider: providerID) }
-            value.navigation = .init(observedAt: RecordCoding.date(completedAtMs), target: navigationTarget)
             value.completions = [.init(sessionID: sessionID, vendor: "OpenCode", turnID: turnID, task: value.title,
-                model: model ?? "Unknown", startedAt: RecordCoding.date(startedAtMs), completedAt: RecordCoding.date(completedAtMs),
-                navigationTarget: navigationTarget)]
+                model: model ?? "Unknown", startedAt: RecordCoding.date(startedAtMs), completedAt: RecordCoding.date(completedAtMs))]
             return value
         }
     }

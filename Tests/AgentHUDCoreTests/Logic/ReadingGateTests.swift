@@ -1,9 +1,9 @@
 import XCTest
 @testable import AgentHUDCore
 
-/// What each surface makes of one quota or balance reading: the notice that holds it back, its status level, the baselines
-/// of quota alerts and reset credits, the menu figure, the account header, the reset column, the forecast hint, and what a
-/// retained report and the settings keep of a window the read left out.
+/// What each surface makes of one quota or balance reading: the notice that holds it back, its status level, the most used
+/// window, the account header, the reset column, the forecast hint, and what a retained report and the settings keep of a
+/// window the read left out.
 final class ReadingGateTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
     private let account = ProviderAccount.identified(provider: "Codex", user: "a@example.com", workspace: "workspace-1")!
@@ -42,13 +42,9 @@ final class ReadingGateTests: XCTestCase {
     private struct Gates: Equatable {
         /// Why the reading is not to be trusted.
         var notice: String?
-        /// The row's colour in the island, the glow and the menu.
+        /// The row's colour in the panel.
         var level: StatusLevel? = .warning
-        /// Quota alerts take the reading as the baseline the next reading is compared with.
-        var startsAlerts = true
-        /// Reset credits take the account's reading as their baseline.
-        var startsCredits = true
-        /// The menu bar's most used window.
+        /// The most used window.
         var menuFigure: Double? = 75
         var status = "Current account"
         var reset = "2h 00m"
@@ -70,19 +66,19 @@ final class ReadingGateTests: XCTestCase {
             // The reset column passes over the vendor's notice. A reading without a level enters neither the menu figure nor
             // a hint, and the kept report and the settings both keep the window a failed read left out.
             ("the vendor's read failed", Reading(sourceNotices: ["Codex": "offline"], quotaNotices: ["Codex": "offline"]),
-             Gates(notice: "offline", level: nil, startsAlerts: false, startsCredits: false, menuFigure: nil, status: "Last read 1m ago",
+             Gates(notice: "offline", level: nil, menuFigure: nil, status: "Last read 1m ago",
                    hint: nil, keepsLeftOutWindow: true, keepsLeftOutRow: true, keptSessions: ["Codex"])),
             // A notice about the vendor's logs holds nothing back.
             ("only the vendor's logs could not be read", Reading(sourceNotices: ["Codex": "logs unreadable"]), Gates()),
             ("a report that does not tell quota notices apart", Reading(sourceNotices: ["Codex": "offline"], quotaNotices: nil),
-             Gates(notice: "offline", level: nil, startsAlerts: false, startsCredits: false, menuFigure: nil, status: "Last read 1m ago",
+             Gates(notice: "offline", level: nil, menuFigure: nil, status: "Last read 1m ago",
                    hint: nil, keepsLeftOutWindow: true, keepsLeftOutRow: true, keptSessions: ["Codex"])),
             ("the account's read failed", Reading(accountNotice: "offline"),
-             Gates(notice: "offline", level: nil, startsAlerts: false, startsCredits: false, menuFigure: nil, status: "Last read 1m ago",
+             Gates(notice: "offline", level: nil, menuFigure: nil, status: "Last read 1m ago",
                    hint: nil, keepsLeftOutWindow: true, keepsLeftOutRow: true)),
             ("an earlier version's report that files the account's failure under the account's id",
              Reading(accountNotice: "offline", sourceNotices: [account.id: "offline"], quotaNotices: [account.id: "offline"]),
-             Gates(notice: "offline", level: nil, startsAlerts: false, startsCredits: false, menuFigure: nil, status: "Last read 1m ago",
+             Gates(notice: "offline", level: nil, menuFigure: nil, status: "Last read 1m ago",
                    hint: nil, keepsLeftOutWindow: true, keepsLeftOutRow: true)),
             ("an earlier version's report that files a failed login under Codex login",
              Reading(sourceNotices: ["Codex login": "offline"], quotaNotices: ["Codex login": "offline"]),
@@ -92,21 +88,20 @@ final class ReadingGateTests: XCTestCase {
              Gates(keptSessions: ["Pi"])),
             ("the account's read failed in a client home it has left", Reading(otherHomes: [failedAccount]), Gates()),
             ("a reading 29:59 old", Reading(age: 1799), Gates()),
-            // A reading keeps its level however old; alerts and reset credits need one under 30 minutes old.
-            ("a reading 30:00 old", Reading(age: 1800), Gates(startsAlerts: false, startsCredits: false)),
-            ("a reading two hours old", Reading(age: 7200), Gates(startsAlerts: false, startsCredits: false, status: "Current account")),
+            // A reading keeps its level however old.
+            ("a reading 30:00 old", Reading(age: 1800), Gates()),
+            ("a reading two hours old", Reading(age: 7200), Gates(status: "Current account")),
             // A reading from the future is used nowhere.
             ("a reading 60 s in the future", Reading(age: -60),
-             Gates(level: nil, startsAlerts: false, startsCredits: false, menuFigure: nil, hint: nil)),
-            ("a reset that has passed", Reading(resetIn: -60), Gates(level: nil, startsAlerts: false, menuFigure: nil, reset: "Pending update",
+             Gates(level: nil, menuFigure: nil, hint: nil)),
+            ("a reset that has passed", Reading(resetIn: -60), Gates(level: nil, menuFigure: nil, reset: "Pending update",
                                                                      hint: nil)),
             // Running out after the reset, the hint gives the share used by then.
             ("a reset under a minute away", Reading(resetIn: 30), Gates(reset: "<1m", hint: "75% by reset")),
             ("no reset and a full window", Reading(remaining: 100, resetIn: nil),
              Gates(level: .ok, menuFigure: 0, reset: "—", hint: nil)),
-            // Without a reset, only a full window is an alert baseline.
             ("no reset and a half-used window", Reading(remaining: 50, resetIn: nil),
-             Gates(level: .ok, startsAlerts: false, menuFigure: 50, reset: "—", hint: nil)),
+             Gates(level: .ok, menuFigure: 50, reset: "—", hint: nil)),
         ]
         let store = try makeStore([window])
         let settings = try makeSettings([window, spark])
@@ -138,49 +133,15 @@ final class ReadingGateTests: XCTestCase {
                     AccountObservation(account: ProviderAccount(pool: pools[1]), observedAt: now.addingTimeInterval(-60)),
                 ]])
             show(report, in: store)
-            var alerts = QuotaAlertTracker()
-            _ = alerts.update(report: report, agents: rows, now: now)
-            let crossed = alerts.update(report: nextReading(of: rows), agents: rows, now: later).criticalAgentIDs
             XCTAssertEqual(rows.map { report.quotaNotice(for: $0) }, ["rejected", nil], name)
             XCTAssertEqual(report.quotaNotice(vendor: "Kimi"), vendorNotice, name)
             XCTAssertEqual(store.rows.map(\.level), [nil, .warning], name)
-            XCTAssertEqual(rows.map { crossed.contains($0.id) }, [false, true], name)
             XCTAssertEqual(store.rows.map { row in row.account.map { store.accountLabel(for: $0) } }, ["Last read 1m ago", "Current account"], name)
         }
     }
 
-    /// A reset alert lists the account's other windows that are exhausted until a later reset, among those whose readings
-    /// show a level: however old, but not from the future.
-    func testAResetAlertNamesExhaustedSiblingsWhateverTheirReadingsAge() {
-        let weekly = AgentDescriptor(id: account.windowID("codex:codex:secondary"), vendor: "Codex", model: "Weekly", source: "",
-                                     enabled: true, account: account)
-        let cases: [(String, UsageSnapshot, [String])] = [
-            ("an exhausted sibling", snapshot(weekly, remaining: 0, resetIn: 86400, at: now.addingTimeInterval(-60)), ["Weekly"]),
-            ("an exhausted sibling read two hours ago", snapshot(weekly, remaining: 0, resetIn: 86400, at: now.addingTimeInterval(-7200)),
-             ["Weekly"]),
-            ("an exhausted sibling read in the future", snapshot(weekly, remaining: 0, resetIn: 86400, at: now.addingTimeInterval(60)), []),
-            ("an exhausted sibling whose reset has passed", snapshot(weekly, remaining: 0, resetIn: -60, at: now.addingTimeInterval(-60)), []),
-            ("an exhausted sibling without a reset", snapshot(weekly, remaining: 0, resetIn: nil, at: now.addingTimeInterval(-60)), []),
-            ("a sibling with under half a point left", snapshot(weekly, remaining: 0.4, resetIn: 86400, at: now.addingTimeInterval(-60)),
-             ["Weekly"]),
-            ("a sibling with more than half a point left", snapshot(weekly, remaining: 0.6, resetIn: 86400, at: now.addingTimeInterval(-60)), []),
-        ]
-        let accounts = ["Codex": [AccountObservation(account: account, observedAt: now.addingTimeInterval(-60))]]
-        for (name, sibling, expected) in cases {
-            var tracker = QuotaAlertTracker()
-            let before = now.addingTimeInterval(-300)
-            _ = tracker.update(report: UsageReport(generatedAt: before, snapshots: [snapshot(window, remaining: 50, at: before)], sessions: [],
-                                                   accounts: accounts), agents: [window, weekly], now: before)
-            let restored = UsageReport(generatedAt: now, snapshots: [snapshot(window, remaining: 100, at: now.addingTimeInterval(-60)), sibling],
-                                       sessions: [], accounts: accounts)
-            let alerts = tracker.update(report: restored, agents: [window, weekly], now: now).alerts
-            XCTAssertEqual(alerts.map(\.kind), [.reset], name)
-            XCTAssertEqual(alerts.first?.otherExhaustedWindows.map(\.name), expected, name)
-        }
-    }
-
-    /// An API balance takes its place in the glow between the quota rows around it, by the rules of a quota window: a
-    /// balance whose read failed, or one read in the future, has no level and leaves the glow.
+    /// An API balance takes its level between the quota rows around it, by the rules of a quota window: a balance whose
+    /// read failed, or one read in the future, has no level.
     @MainActor
     func testABalanceBetweenTwoQuotaRowsFollowsTheQuotaRules() throws {
         let (rows, store) = try balanceStore()
@@ -234,8 +195,6 @@ final class ReadingGateTests: XCTestCase {
 
     // MARK: Fixtures
 
-    private var later: Date { now.addingTimeInterval(300) }
-
     @MainActor
     private func gates(_ reading: Reading, store: UsageStore, settings: SettingsStore) throws -> Gates {
         let at = now.addingTimeInterval(-reading.age)
@@ -246,16 +205,10 @@ final class ReadingGateTests: XCTestCase {
                                                     quotaNotice: reading.accountNotice, resetCredits: credits(1), quotaWindowIDs: [window.id])] + reading.otherHomes])
         show(report, in: store)
         let row = try XCTUnwrap(store.rows.first)
-        var alerts = QuotaAlertTracker(), resets = ResetCreditTracker()
-        _ = alerts.update(report: report, agents: [window], now: now)
-        _ = resets.update(report: report, now: now)
-        let next = nextReading(of: [window])
         settings.updateAgents { _ in [window, spark] }
         settings.mergeDiscovered(from: report)
         let retained = report.retainingReadings(from: earlier)
         return Gates(notice: report.quotaNotice(for: window), level: row.level,
-                     startsAlerts: !alerts.update(report: next, agents: [window], now: later).criticalAgentIDs.isEmpty,
-                     startsCredits: !resets.update(report: next, now: later).isEmpty,
                      menuFigure: store.maxUsedPct, status: row.account.map { store.accountLabel(for: $0) } ?? "no account",
                      reset: row.resetLabel(now: now), hint: store.quotaForecastHint(for: window.id),
                      keepsLeftOutWindow: retained.snapshot(for: spark.id) != nil,
@@ -275,16 +228,6 @@ final class ReadingGateTests: XCTestCase {
                             pctOfWindow: nil, tokensIn: 1, tokensOut: 1)
             }, discoveredAgents: [window, spark], consumers: consumers,
             accounts: ["Codex": [AccountObservation(account: account, observedAt: at, resetCredits: credits(1))]])
-    }
-
-    /// The next reading of `rows`: fresh, critical and with one more reset credit, so it raises an alert and a grant only
-    /// where the reading before it was taken as a baseline.
-    private func nextReading(of rows: [AgentDescriptor]) -> UsageReport {
-        let accounts = Dictionary(grouping: Set(rows.compactMap(\.account)), by: \.provider).mapValues {
-            $0.map { AccountObservation(account: $0, observedAt: later, resetCredits: credits(2)) }
-        }
-        return UsageReport(generatedAt: later, snapshots: rows.map { snapshot($0, remaining: 5, at: later) }, sessions: [],
-                           discoveredAgents: rows, accounts: accounts)
     }
 
     /// A Codex window with 75% used and a Grok window with 40% used, on either side of a DeepSeek balance.

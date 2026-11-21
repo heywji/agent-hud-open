@@ -28,14 +28,6 @@ struct IslandPane: View {
                         tokenSample
                     }
                 }
-            SettingsSection(title: L10n.text("Logo", "Logos"), theme: theme) {
-                SettingsToggleRow(
-                    label: L10n.text("Bot 形象", "Bot logos"),
-                    subtitle: L10n.text("工作时保持 Bot；空闲时偶尔变成 Bot 活动几秒，再回到 Logo。等待批准或刚回复时也显示 Bot。",
-                                        "Working agents stay bots. Idle logos occasionally become bots for a few seconds. Bots also appear for approvals and replies."),
-                    isOn: settings.binding(\.botLogos)
-                )
-            }
             SettingsSection(title: L10n.text("悬停交互", "Hover behavior"), theme: theme) {
                 SettingsToggleRow(
                     label: L10n.text("按 Option 才展开", "Press Option to open"),
@@ -89,8 +81,7 @@ struct IslandPane: View {
                     .font(.tabular(11)).foregroundStyle(Theme.island.secondary)
             }
             TokenBarsChart(columns: IslandSampleData.columns, interval: IslandSampleData.interval,
-                           colors: IslandSampleData.colors, consumers: IslandSampleData.consumers, theme: .island,
-                           compact: true)
+                           colors: IslandSampleData.colors, consumers: IslandSampleData.consumers, theme: .island)
                 .frame(height: 42)
         }
         .font(.ui(11))
@@ -112,13 +103,6 @@ struct IslandPane: View {
                 .frame(width: 14, height: 14)
                 Text(L10n.text("修复登录问题", "Fix sign-in issue"))
                 Spacer()
-                HStack(spacing: 3) {
-                    Image(systemName: "questionmark.bubble.fill").font(.system(size: 9, weight: .semibold))
-                    Text("1").font(.tabular(9, .semibold))
-                }
-                .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(Capsule().fill(Theme.island.status(.warning).opacity(0.16)))
-                .foregroundStyle(Theme.island.status(.warning))
                 Text("60k tok")
             }
             .foregroundStyle(Theme.island.secondary)

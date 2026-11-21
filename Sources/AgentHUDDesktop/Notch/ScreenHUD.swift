@@ -2,7 +2,7 @@ import AppKit
 import AgentHUDCore
 import SwiftUI
 
-/// One screen's HUD: its glow window, its island window and its own hover state machine.
+/// One screen's HUD: its island window, the shadow under it and its own hover state machine.
 ///
 /// Everything here belongs to a single display, because two displays can be in different modes, be hovered
 /// independently and show different things. What is shared — the store, the settings, the system appearance,
@@ -11,39 +11,21 @@ import SwiftUI
 final class ScreenHUD {
     /// Height of the open panel; follows the content reported by `IslandRootView`.
     private var panelHeight: CGFloat = IslandController.defaultPanelHeight
-    private var alertDetailHeight: CGFloat = 300
-    /// The tallest the open card has been while the pointer has stayed on it; zero once it leaves.
-    private var alertHoverFloor: CGFloat = 0
 
     /// The display this HUD lives on, looked up again each time: `NSScreen` instances are replaced when
     /// displays change, while the key outlives them.
     let key: String
     private let store: UsageStore
     private let settings: SettingsStore
-    private let openSession: @MainActor (SessionNavigationTarget) async -> Bool
-    private var navigationTask: Task<Bool, Never>?
-    private var failedNavigationAlertID: String?
-    private var failedListedSessionID: String?
-    /// One expansion per screen, shared by its live panel and the fresh view used for measuring it.
-    private var answeringSessionID: String?
     private let mouseLocation: @MainActor () -> CGPoint
-    private let additionalHUDControls: @MainActor (@escaping @MainActor () -> Void) -> AnyView
-    private let renderMaterials: @Sendable (GlowWindowController.PreparationInputs) async -> GlowWindowController.PreparedImages
+    private let renderMaterials: @Sendable (ShadowWindowController.PreparationInputs) async -> ShadowWindowController.PreparedImages
     private(set) var geometry: NotchGeometry
     /// Set by the coordinator, which watches the system appearance once for every screen.
     var systemIsLight = SystemAppearance.isLight
-    let glow: GlowWindowController
+    let shadow: ShadowWindowController
     let island: IslandWindowController
-    private var machine = HoverMachine() {
-        didSet { if !machine.isOpen { pinned = false } }
-    }
-    /// On a dock that separates its agents, hovering only peeks; a click asks for the agent's whole panel,
-    /// which lasts until the HUD closes.
-    private var pinned = false
-    /// A separated dock's cards move inside a window that waits for them: it takes in the old place and the new one
-    /// at once, and shrinks to the new one when this fires.
-    private var cardSettle: Task<Void, Never>?
-    /// One owner for the next surface's measurements and bitmaps, including opening and collapse.
+    private var machine = HoverMachine()
+    /// One owner for the next surface's measurements and shadow bitmap, including opening and collapse.
     private var materialPreparation: MaterialPreparation? {
         didSet { oldValue?.task?.cancel() }
     }
@@ -51,153 +33,18 @@ final class ScreenHUD {
     private var targetWindowFrame: CGRect?
     /// The card whose geometry is still interpolating; canvas-only changes share its completion.
     private var geometryTransitionFrame: CGRect?
-    /// The island's own shape while an event is showing: wider than the silhouette by the two wings it grew.
-    private var alertFrame: CGRect?
-    private let alerts = IslandAlertQueue()
-    private var activeAlert: IslandAlert? {
-        guard let alert = alerts.current?.alert else { return nil }
-        // A queued card keeps its reply, but the source's latest reading owns where its session now lives.
-        if case .completion(var event) = alert,
-           let current = store.report?.completions.first(where: { $0.id == event.id }) {
-            event.navigationTarget = current.navigationTarget
-            return .completion(event)
-        }
-        return alert
-    }
-    private var sessionNavigationFailed: Bool {
-        failedNavigationAlertID != nil && failedNavigationAlertID == activeAlert?.id
-    }
-    private var showsAlertDetails: Bool { machine.isOpen && alerts.current?.inUsagePanel == false }
     private var pointerInside = false
     /// Whether the hover currently counts as one that opens the panel; see `reevaluateHover`.
     private var hoverOpens = false
-    /// The user is typing into the island. It stays open under their hands, wherever the pointer goes, until they stop.
-    private var typing = false
     private var modifierWatch: Timer?
     private let dragSurface = HUDDragWindowController()
     /// A drag is previewed without writing preferences on every mouse movement; mouse-up commits once.
     private var previewPlacement: ScreenPlacement?
     /// The grip along the strip, kept when the queue turns onto another edge.
     private var dragGrabFraction: CGFloat = 0.5
-    /// The mark the pointer was last over, on a dock that separates its agents.
-    private var hoveredMark: String?
-
-    /// One agent's mark on the dock: the vendor it is drawn for, and its centre along the edge on screen.
-    struct AgentMark: Equatable {
-        let vendor: String
-        let anchor: CGFloat
-        var key: String { AgentArtwork.markKey(vendor) }
-    }
-
-    /// The marks an agent's own card can open from; none unless this dock separates its agents.
-    private var agentMarks: [AgentMark] {
-        guard placement.separatesAgents, geometry.mode.isDocked else { return [] }
-        let centres = simpleMeter?.markCentres ?? logoQueue?.markCentres ?? []
-        return Self.agentMarks(centres: centres, strip: geometry.rect, edge: geometry.edge)
-    }
-
-    /// Puts each mark's place along its strip on screen. A side strip is read top to bottom, while the
-    /// screen's own coordinates run upward.
-    static func agentMarks(centres: [(vendor: String, along: CGFloat)], strip: CGRect, edge: HUDEdge) -> [AgentMark] {
-        centres.map { AgentMark(vendor: $0.vendor, anchor: edge.isHorizontal ? strip.minX + $0.along : strip.maxY - $0.along) }
-    }
-
-    /// The mark nearest a pointer that is on the strip; nil while it is anywhere else.
-    static func mark(at point: CGPoint, among marks: [AgentMark], strip: CGRect, edge: HUDEdge) -> AgentMark? {
-        guard containsPointer(point, in: strip) else { return nil }
-        let along = edge.isHorizontal ? point.x : point.y
-        return marks.min { abs($0.anchor - along) < abs($1.anchor - along) }
-    }
-
-    /// The agent the card is for: the sender of the event on show, otherwise the hovered mark. Nil shows
-    /// the whole HUD, which is also what an event from an agent with no mark here gets.
-    private var focus: AgentMark? {
-        guard previewPlacement == nil else { return nil }
-        let marks = agentMarks
-        if let alert = activeAlert {
-            let key = AgentArtwork.markKey(alert.vendor)
-            return marks.first { $0.key == key }
-        }
-        return marks.first { $0.key == hoveredMark }
-    }
-
-    /// A click on a mark, or on its peek, opens that agent's whole panel.
-    func pinAgent() {
-        guard !agentMarks.isEmpty, activeAlert == nil, previewPlacement == nil else { return }
-        if let mark = Self.mark(at: mouseLocation(), among: agentMarks, strip: geometry.rect, edge: geometry.edge) {
-            hoveredMark = mark.key
-        }
-        guard focus != nil else { return }
-        materialPreparation = nil
-        if machine.isOpen {
-            guard !pinned else { return }
-            pinned = true
-            apply(animated: false)
-        } else {
-            forceOpen()
-            pinned = true
-            apply(animated: false)
-        }
-        samplePointer()
-    }
-
-    /// What hovering a mark shows: a card beside it on a Dynamic dock, one line out of the Simple panel.
-    private func peek(for mark: AgentMark) -> AgentPeek {
-        var peek = AgentPeek.make(vendor: mark.vendor, store: store)
-        peek.edge = geometry.edge
-        peek.scale = stripScale
-        if geometry.mode == .simple {
-            peek.style = .line
-            // On a side edge the line starts behind the panel, so it reads as the panel growing.
-            peek.tuck = geometry.edge.isHorizontal ? 0 : (geometry.rect.width / 2).rounded()
-        }
-        return peek
-    }
-
-    /// What the dock grows out of itself — the Simple panel's line, the Dynamic dock's bubble, a compact reminder —
-    /// is written to this scale: as tall as one of the dock's marks, and never smaller than at the default. Cards
-    /// keep their own sizes.
-    private var stripScale: CGFloat { IslandRootView.dockScale(mode: geometry.mode, placement: placement) }
-
-    /// The halves of the reminder on show, as its view lays them out on this dock.
-    private var compactWings: CompactWings? {
-        activeAlert.map { CompactWings.dock(for: $0, waiting: max(1, PermissionRequests.shared.pending.count), scale: stripScale) }
-    }
-
-    /// A detached card's place: beside the strip on its inner side, centred on the mark and kept on screen.
-    /// A negative gap starts the card behind the strip.
-    static func detachedFrame(size: CGSize, anchor: CGFloat, strip: CGRect, edge: HUDEdge, gap: CGFloat,
-                              screen: CGRect) -> CGRect {
-        // Whole points throughout: a window cannot sit on half a point, and one asked to would be nudged back and
-        // forth by every later pass.
-        let width = min(size.width.rounded(.up), screen.width), height = min(size.height.rounded(.up), screen.height)
-        let x = min(screen.maxX - width, max(screen.minX, (anchor - width / 2).rounded()))
-        let y = min(screen.maxY - height, max(screen.minY, (anchor - height / 2).rounded()))
-        let gap = gap.rounded()
-        switch edge {
-        case .top: return CGRect(x: x, y: strip.minY - gap - height, width: width, height: height)
-        case .bottom: return CGRect(x: x, y: strip.maxY + gap, width: width, height: height)
-        case .left: return CGRect(x: strip.maxX + gap, y: y, width: width, height: height)
-        case .right: return CGRect(x: strip.minX - gap - width, y: y, width: width, height: height)
-        }
-    }
-
-    /// Sliding along the strip moves the open panel from one agent to the next.
-    private func followHoveredMark(_ point: CGPoint) {
-        guard let mark = Self.mark(at: point, among: agentMarks, strip: geometry.rect, edge: geometry.edge),
-              mark.key != hoveredMark else { return }
-        hoveredMark = mark.key
-        guard activeAlert == nil else { return }
-        if machine.isOpen {
-            materialPreparation = nil
-            apply(animated: true)
-        } else {
-            prepareOpening()
-        }
-    }
 
     /// Inputs that can change the natural layout while a hover is waiting, including token data that
-    /// need not change the coordinator's quota rows or glow appearance.
+    /// need not change the coordinator's quota rows.
     private struct PanelInputs: Equatable {
         let report: UsageReport?
         let settings: AgentHUDCore.Settings
@@ -207,23 +54,9 @@ final class ScreenHUD {
         let dataDate: Date
         let error: String?
         let loading: Bool
-        let range: StatsRange
-        let bucketSize: TokenBucketSize
-        let dimensions: TokenDimensions
-        let requests: [PermissionRequest]
         let geometry: NotchGeometry
         let light: Bool
-        let appearance: GlowAppearance
-        let alertID: String?
-        let focus: AgentMark?
-        let pinned: Bool
-        let alertDetails: Bool
-        let pendingIDs: [String]
-        let sessionNavigationFailed: Bool
-        let failedListedSessionID: String?
-        let answeringSessionID: String?
         let reduceMotion: Bool
-        let colorSpace: CGColorSpace?
     }
 
     private final class MaterialPreparation {
@@ -231,11 +64,11 @@ final class ScreenHUD {
         let open: Bool
         let surface: Surface
         let height: CGFloat
-        let task: Task<GlowWindowController.PreparedImages?, Never>?
-        var images: GlowWindowController.PreparedImages?
+        let task: Task<ShadowWindowController.PreparedImages?, Never>?
+        var images: ShadowWindowController.PreparedImages?
 
         init(inputs: PanelInputs, open: Bool, surface: Surface, height: CGFloat,
-             task: Task<GlowWindowController.PreparedImages?, Never>?) {
+             task: Task<ShadowWindowController.PreparedImages?, Never>?) {
             self.inputs = inputs
             self.open = open
             self.surface = surface
@@ -246,36 +79,21 @@ final class ScreenHUD {
 
     private var panelInputs: PanelInputs {
         PanelInputs(report: store.report, settings: settings.settings, agents: settings.agents,
-                      hookTurns: store.hookTurns, now: store.now, dataDate: store.dataDate,
-                      error: store.lastError, loading: store.isLoading, range: store.statsRange,
-                      bucketSize: store.tokenBucketSize, dimensions: store.tokenDimensions,
-                      requests: PermissionRequests.shared.pending, geometry: geometry, light: systemIsLight,
-                      appearance: store.glowAppearance(light: systemIsLight, on: key),
-                      alertID: activeAlert?.id, focus: focus, pinned: pinned, alertDetails: alerts.current?.inUsagePanel == false,
-                      pendingIDs: alerts.pendingIDs,
-                      sessionNavigationFailed: sessionNavigationFailed, failedListedSessionID: failedListedSessionID,
-                      answeringSessionID: answeringSessionID,
-                      reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-                      colorSpace: glow.panel.screen?.colorSpace?.cgColorSpace)
+                    hookTurns: store.hookTurns, now: store.now, dataDate: store.dataDate,
+                    error: store.lastError, loading: store.isLoading, geometry: geometry, light: systemIsLight,
+                    reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
-    var onOpenStats: (() -> Void)?
     var onOpenSettings: (() -> Void)?
-    /// Asks for a request another screen holds: the waiting list names every request, wherever it arrived.
-    var onClaimRequest: ((String) -> Void)?
 
     init(key: String, screen: NSScreen?, store: UsageStore, settings: SettingsStore,
          mouseLocation: @escaping @MainActor () -> CGPoint = { NSEvent.mouseLocation },
-         openSession: @escaping @MainActor (SessionNavigationTarget) async -> Bool = SessionNavigator.open,
-         additionalHUDControls: @escaping @MainActor (@escaping @MainActor () -> Void) -> AnyView = { _ in AnyView(EmptyView()) },
-         renderMaterials: @escaping @Sendable (GlowWindowController.PreparationInputs) async -> GlowWindowController.PreparedImages
-            = { GlowWindowController.render($0) }) {
+         renderMaterials: @escaping @Sendable (ShadowWindowController.PreparationInputs) async -> ShadowWindowController.PreparedImages
+            = { ShadowWindowController.render($0) }) {
         self.key = key
         self.store = store
         self.settings = settings
-        self.openSession = openSession
         self.mouseLocation = mouseLocation
-        self.additionalHUDControls = additionalHUDControls
         self.renderMaterials = renderMaterials
         // The stored placement decides notch or queue before the first frame, so the HUD never flashes
         // the wrong shape on launch.
@@ -283,16 +101,14 @@ final class ScreenHUD {
             ?? .default(hasNotch: false)
         let geometry = NotchGeometry.detect(screen: screen, placement: placement)
         self.geometry = geometry
-        glow = GlowWindowController(geometry: geometry)
+        shadow = ShadowWindowController(geometry: geometry)
         island = IslandWindowController(frame: geometry.islandFrame, rootView: IslandRootView.placeholder)
         island.onPointerChange = { [weak self] _ in self?.samplePointer() }
-        alerts.onExpire = { [weak self] in self?.dismissAlert() }
         dragSurface.onPress = { [weak self] in self?.grabHUD() }
         dragSurface.onRelease = { [weak self] in self?.releaseHUD() }
         dragSurface.onBegin = { [weak self] point in self?.beginMoving(at: point) }
         dragSurface.onDrag = { [weak self] point in self?.move(to: point) }
         dragSurface.onEnd = { [weak self] in self?.finishMoving() }
-        dragSurface.onClick = { [weak self] in self?.pinAgent() }
 
         apply(animated: false)
         island.show()
@@ -304,7 +120,6 @@ final class ScreenHUD {
         guard previewPlacement == nil else { return }
         if pointerInside != inside {
             pointerInside = inside
-            alerts.hold(inside || navigationTask != nil)
             // Whether Option is down can change without the pointer moving, so while it is over the HUD the
             // modifier is watched. A global keyboard monitor would ask for accessibility; this does not.
             modifierWatch?.invalidate()
@@ -326,14 +141,10 @@ final class ScreenHUD {
         island.panel.ignoresMouseEvents = passes
     }
 
-    /// The region that counts as hovering: the marks while collapsed, the wings an event grew, the panel once it is
-    /// open. The target frame rather than the window's, which is briefly grown into a canvas for the opening
-    /// animation. An event is the only thing on screen at that moment, so everything it draws is part of it — a
-    /// reminder you cannot point at is a reminder you cannot answer.
+    /// The region that counts as hovering: the marks while collapsed, the panel once it is open. The target frame
+    /// rather than the window's, which is briefly grown into a canvas for the opening animation.
     func samplePointer() {
-        let point = mouseLocation()
-        if previewPlacement == nil, !dragSurface.isPressed { followHoveredMark(point) }
-        pointer(inside: Self.containsPointer(point, in: hoverRegion))
+        pointer(inside: Self.containsPointer(mouseLocation(), in: hoverRegion))
     }
 
     /// CGRect.contains excludes its top and right edges. A pointer pinned to a display edge is still
@@ -351,25 +162,23 @@ final class ScreenHUD {
     }
 
     private var hoverRegion: CGRect {
-        ScreenHUD.hoverRegion(open: machine.isOpen, panel: targetWindowFrame ?? island.panel.frame,
-                              alert: alertFrame, marks: geometry.rect)
+        ScreenHUD.hoverRegion(open: machine.isOpen, panel: targetWindowFrame ?? island.panel.frame, marks: geometry.rect)
     }
 
     /// Which shape the pointer has to be inside to count as hovering this HUD.
-    static func hoverRegion(open: Bool, panel: CGRect, alert: CGRect?, marks: CGRect) -> CGRect {
-        if open { return panel }
-        return alert ?? marks
+    static func hoverRegion(open: Bool, panel: CGRect, marks: CGRect) -> CGRect {
+        open ? panel : marks
     }
 
-    /// Hovering opens the panel, unless the user asked for Option as well. Typing keeps it open either way.
+    /// Hovering opens the panel, unless the user asked for Option as well.
     private func reevaluateHover() {
         guard !dragSurface.isPressed, previewPlacement == nil else { return }
         let opens = ScreenHUD.opensOnHover(counted: hoverOpens, open: machine.isOpen, pointerInside: pointerInside,
-                                           typing: typing, requiresOption: settings.settings.requiresOptionToOpen,
+                                           requiresOption: settings.settings.requiresOptionToOpen,
                                            optionDown: NSEvent.modifierFlags.contains(.option))
         let canFinishOpening = switch machine.state {
         case .opening: true
-        // A handoff to Settings or Stats deliberately stays collapsed until the pointer leaves.
+        // A handoff to Settings deliberately stays collapsed until the pointer leaves.
         case .collapsed: !hoverOpens
         default: false
         }
@@ -389,9 +198,8 @@ final class ScreenHUD {
     /// only to start it: a tap is enough, and from then on the hover counts until the pointer leaves. An open panel
     /// needs no Option either — it is being read and pointed at, including by a pointer that slipped off the edge and
     /// came back before it closed.
-    static func opensOnHover(counted: Bool, open: Bool, pointerInside: Bool, typing: Bool,
-                             requiresOption: Bool, optionDown: Bool) -> Bool {
-        typing || pointerInside && (counted || open || !requiresOption || optionDown)
+    static func opensOnHover(counted: Bool, open: Bool, pointerInside: Bool, requiresOption: Bool, optionDown: Bool) -> Bool {
+        pointerInside && (counted || open || !requiresOption || optionDown)
     }
 
     func forceOpen() {
@@ -402,224 +210,10 @@ final class ScreenHUD {
         transition(machine.reduce(.forceCollapse, config: config))
     }
 
-    // MARK: Quota events
-
-    func present(_ alert: QuotaAlert) { present(.quota(alert)) }
-
-    /// `inUsagePanel` is passed on when one request hands over to the next: the surface the user is looking at is
-    /// theirs, and answering a card must not move the queue into the usage panel underneath it.
-    func present(_ alert: IslandAlert, inUsagePanel: Bool? = nil) {
-        // A hidden or paused glow silences news. A client waiting for an answer is not news: it is a question that
-        // was asked of this user, and hiding it would leave the session stuck with nobody knowing why.
-        let silenced = (store.glowHidden || store.isPaused) && !alert.isPersistent
-        guard !silenced else { return }
-        // A separated dock has no usage panel for a card to become a row of: an event is always its own card.
-        guard alerts.show(alert, inUsagePanel: inUsagePanel ?? (machine.isOpen && agentMarks.isEmpty)) else {
-            if alerts.contains(id: alert.id) {
-                materialPreparation = nil
-                apply(animated: true)
-            }
-            return
-        }
-        // An event owns the brief expansion; a pending hover must not open the full panel underneath it.
-        timer?.invalidate()
-        timer = nil
-        materialPreparation = nil
-        if !machine.isOpen { machine = HoverMachine() }
-        if hoverOpens {
-            transition(machine.reduce(.pointerEntered(at: Date()), config: config))
-        }
-        // A request cannot be answered from a peek, so on a separated dock it opens as its whole card.
-        if case .permission = alert, focus != nil, !machine.isOpen { forceOpen() }
-        apply(animated: true)
-        island.show()
-    }
-
-    /// The client withdrew its request: it timed out, it was answered in the terminal, or it was killed. Nothing is
-    /// answered on the user's behalf — the card simply stops being a question.
-    func withdraw(requestID: String) {
-        let surface = alerts.current?.inUsagePanel
-        let wasShowing = activeAlert?.id == requestID
-        let outcome = alerts.remove(id: requestID)
-        guard outcome.removed else { return }
-        if wasShowing { stopTyping() }
-        if let next = outcome.next {
-            present(next, inUsagePanel: surface)
-        } else if alerts.current == nil {
-            closeAfterLastAlert(wasInUsagePanel: surface ?? false)
-        }
-    }
-
-    /// Brings a stacked request to the front, so the buttons act on the card the user is looking at. One that arrived
-    /// on another screen moves to this one first.
-    func selectRequest(_ id: String) {
-        if !alerts.contains(id: id) { onClaimRequest?(id) }
-        guard alerts.promote(id: id) else { return }
-        stopTyping()
-        materialPreparation = nil
-        apply(animated: true)
-    }
-
-    /// The requests this screen holds, which outlive it when its display goes away.
-    var questions: [IslandAlert] { alerts.questions }
-
-    func holds(_ id: String) -> Bool { alerts.contains(id: id) }
-
-    /// Hands a request over to another screen: it leaves this one as a withdrawn one does, still unanswered.
-    func take(requestID: String) -> IslandAlert? {
-        guard let alert = alerts.questions.first(where: { $0.id == requestID }) else { return nil }
-        withdraw(requestID: requestID)
-        return alert
-    }
-
-    /// Hands the user's answer to the client that is waiting for it, and takes the card off the island.
-    private func decideAlert(_ decision: PermissionDecision) {
-        guard case .permission(let request)? = activeAlert else { return }
-        stopTyping()
-        PermissionRequests.shared.resolve(request.id, decision)
-    }
-
-    private func setTyping(_ typing: Bool) {
-        guard self.typing != typing else { return }
-        self.typing = typing
-        updateDragSurface()
-        reevaluateHover()
-    }
-
-    private func answerQuestions(in sessionID: String?) {
-        guard answeringSessionID != sessionID else { return }
-        stopTyping()
-        answeringSessionID = sessionID
-        apply(animated: true)
-    }
-
-    /// The card being typed into is gone: the keyboard goes back to the app it came from.
-    private func stopTyping() {
-        island.panel.releaseKeyboard()
-        setTyping(false)
-    }
-
-    /// Closing a reply removes that reminder; an unanswered request must stay with its client.
-    func dismissCompletionAlert() {
-        guard case .completion? = activeAlert else { return }
-        cancelSessionNavigation()
-        dismissAlert()
-    }
-
-    private func dismissAlert() {
-        let surface = alerts.current?.inUsagePanel
-        if let next = alerts.dismiss() {
-            present(next, inUsagePanel: surface)
-        } else {
-            closeAfterLastAlert(wasInUsagePanel: surface ?? false)
-        }
-    }
-
-    /// What the island does once the last card is gone. A card the user was reading in place of the panel takes the
-    /// island back to where it was before it arrived: the pointer is on a button that said Deny, not on one asking
-    /// for the usage panel, and sliding the panel under it would answer a question nobody put. A card that was a row
-    /// inside the panel leaves the panel exactly where it was.
-    private func closeAfterLastAlert(wasInUsagePanel: Bool) {
-        if ScreenHUD.closesAfterLastAlert(wasInUsagePanel: wasInUsagePanel, pointerInside: pointerInside) {
-            machine = HoverMachine()
-            materialPreparation = nil
-            timer?.invalidate()
-            timer = nil
-        }
-        apply(animated: true)
-    }
-
-    /// Whether the island collapses once the last card is answered.
-    static func closesAfterLastAlert(wasInUsagePanel: Bool, pointerInside: Bool) -> Bool {
-        !wasInUsagePanel || !pointerInside
-    }
-
-    /// A compact reply opens its choices; quota events still open their usage page.
-    func openAlert() {
-        guard let alert = activeAlert else { return }
-        if case .completion = alert {
-            forceOpen()
-        } else {
-            openAlertUsage()
-        }
-    }
-
-    /// The session action never changes destination to usage. A failed attempt leaves its choices available.
-    func openAlertSession() async {
-        guard case .completion(let event)? = activeAlert, let target = event.navigationTarget else { return }
-        cancelSessionNavigation()
-        alerts.hold(true)
-        forceCollapse()
-        let task = Task { await openSession(target) }
-        navigationTask = task
-        let opened = await task.value
-        guard !task.isCancelled else { return }
-        navigationTask = nil
-        alerts.hold(pointerInside)
-        guard activeAlert?.id == event.id else { return }
-        if opened {
-            dismissAlert()
-        } else {
-            failedNavigationAlertID = event.id
-            if machine.isOpen { apply(animated: true) } else { forceOpen() }
-        }
-    }
-
-    /// A listed session follows its source's current destination, independently of its token usage action.
-    func openListedSession(_ id: String) async {
-        guard let target = store.sessions.first(where: { $0.id == id })?.navigationTarget else { return }
-        cancelSessionNavigation()
-        alerts.hold(true)
-        forceCollapse()
-        let task = Task { await openSession(target) }
-        navigationTask = task
-        let opened = await task.value
-        guard !task.isCancelled else { return }
-        navigationTask = nil
-        alerts.hold(pointerInside)
-        if opened {
-            forceCollapse()
-        } else {
-            failedListedSessionID = id
-            if machine.isOpen { apply(animated: true) } else { forceOpen() }
-        }
-    }
-
-    private func cancelSessionNavigation() {
-        navigationTask?.cancel()
-        navigationTask = nil
-        failedNavigationAlertID = nil
-        failedListedSessionID = nil
-    }
-
-    /// Token usage is a distinct user choice, even when the agent's session cannot be located.
-    func openAlertUsage() {
-        guard let alert = activeAlert else { return }
-        cancelSessionNavigation()
-        dismissAlert()
-        alerts.hold(pointerInside)
-        forceCollapse()
-        showAlertUsage(alert)
-    }
-
-    private func showAlertUsage(_ alert: IslandAlert) {
-        store.focusedSessionID = nil
-        switch alert {
-        case .quota(let event) where store.rows.contains(where: { $0.id == event.agent.id }):
-            store.selectedQuotaId = event.agent.id
-        case .completion(let event) where store.sessions.contains(where: { $0.id == event.sessionID }):
-            store.focusedSessionID = event.sessionID
-        default: store.statsTab = .tokens
-        }
-        onOpenStats?()
-    }
-
     /// A click that opens another window takes the HUD down first: the panel floats above every window and stays open
     /// while the pointer rests on it, so the window it opened would appear underneath it. The pointer has to leave and
     /// come back to open it again.
     private func handOff(_ open: () -> Void) {
-        cancelSessionNavigation()
-        alerts.hold(pointerInside)
         forceCollapse()
         open()
     }
@@ -643,7 +237,6 @@ final class ScreenHUD {
             prepareOpening()
         } else if !machine.isOpen {
             materialPreparation = nil
-            answeringSessionID = nil
         }
         if wasOpen != machine.isOpen {
             // The panel opening is someone looking at the numbers, which is reason enough to read the accounts again.
@@ -655,7 +248,7 @@ final class ScreenHUD {
     private func timerFired() {
         if case .opening(let deadline) = machine.state {
             // Validate even when a report changed without a coordinator apply. The worker, rather than a
-            // synchronous raster fallback, finishes an opening whose delay expired before its images were ready.
+            // synchronous raster fallback, finishes an opening whose delay expired before its bitmap was ready.
             prepareOpening()
             if Date() >= deadline, materialPreparation?.images == nil {
                 timer?.invalidate()
@@ -675,29 +268,9 @@ final class ScreenHUD {
     /// Resizes the open panel to its content (rows come and go as windows are discovered).
     private func updatePanelHeight(_ height: CGFloat) {
         let clamped = max(80, min(height.rounded(), maximumContentHeight))
-        if showsAlertDetails {
-            guard abs(clamped - alertDetailHeight) >= 1 else { return }
-            alertDetailHeight = clamped
-            apply(animated: true)
-            return
-        }
         guard clamped > 0, abs(clamped - panelHeight) >= 1 else { return }
         panelHeight = clamped
         if machine.isOpen { apply(animated: true) }
-    }
-
-    /// A card grows to its content freely and shrinks only as far as the pointer allows.
-    ///
-    /// Opening a shorter request, or answering one and losing its row, makes the card shorter than the pointer that
-    /// asked for it: the pointer ends up below the card it is still using, which reads as having left the HUD, and
-    /// the island closes under the user's hand. The card keeps its height until the pointer is no longer standing
-    /// in the part that would be taken away.
-    /// The window's height while a card is open: the card's own, or the tallest the card has been for as long as
-    /// the pointer has stayed on it. The difference is transparent — the black shape is drawn at the card's size —
-    /// so a shorter request opening under the pointer leaves a surface beneath it rather than a black band, and
-    /// the window returns to the card's height the moment the pointer leaves.
-    static func heldWindowHeight(card: CGFloat, floor: CGFloat, pointerInside: Bool) -> CGFloat {
-        pointerInside ? max(card, floor) : card
     }
 
     /// This HUD's own display, or nothing once it has been unplugged.
@@ -712,36 +285,17 @@ final class ScreenHUD {
     // MARK: Repositioning
 
     private func updateDragSurface() {
-        let visibleHUD = geometry.mode == .notch || logoQueue != nil || simpleMeter != nil
-        guard !typing, visibleHUD || previewPlacement != nil || dragSurface.isPressed else {
+        let visibleHUD = geometry.mode == .notch || logoQueue != nil
+        guard visibleHUD || previewPlacement != nil || dragSurface.isPressed else {
             dragSurface.hide()
             return
         }
-        let outline = simpleMeter.map { Self.dragOutline(for: geometry, panelRadius: $0.cornerRadius) }
-        dragSurface.show(frame: Self.dragSurfaceFrame(for: geometry, outline: outline?.rect),
-                         outlined: previewPlacement != nil || dragSurface.isArmed, outline: outline)
+        dragSurface.show(frame: Self.dragSurfaceFrame(for: geometry),
+                         outlined: previewPlacement != nil || dragSurface.isArmed)
     }
 
-    /// Clear space between the Simple panel and the dashes drawn around it.
-    private static let outlineGap: CGFloat = 2
-
-    /// The Simple panel's own shape, a little larger: its strip without the edge margin, with the panel's corner.
-    static func dragOutline(for geometry: NotchGeometry, panelRadius: CGFloat) -> (rect: CGRect, radius: CGFloat) {
-        var panel = geometry.rect
-        let margin = SimpleMeterConfig.edgeMargin
-        switch geometry.edge {
-        case .top: panel.size.height -= margin
-        case .bottom: panel.origin.y += margin; panel.size.height -= margin
-        case .left: panel.origin.x += margin; panel.size.width -= margin
-        case .right: panel.size.width -= margin
-        }
-        return (panel.insetBy(dx: -outlineGap, dy: -outlineGap), panelRadius + outlineGap)
-    }
-
-    /// The dashed bounds leave room at both ends of the queue without moving its marks or backdrop.
-    /// A panel with an outline of its own is grabbed by that outline, with room for its stroke.
-    static func dragSurfaceFrame(for geometry: NotchGeometry, outline: CGRect? = nil) -> CGRect {
-        if let outline { return outline.insetBy(dx: -2, dy: -2).intersection(geometry.screenFrame) }
+    /// The dashed bounds leave room at both ends of the queue without moving its marks.
+    static func dragSurfaceFrame(for geometry: NotchGeometry) -> CGRect {
         var frame = geometry.rect.insetBy(dx: geometry.edge.isHorizontal ? -8 : 0,
                                          dy: geometry.edge.isHorizontal ? 0 : -8)
         // The physical notch cannot be clicked. A little space beneath it makes its move surface reachable.
@@ -779,14 +333,13 @@ final class ScreenHUD {
         geometryTransitionFrame = nil
         machine = HoverMachine()
         hoverOpens = false
-        alerts.hold(true)
         apply(animated: false)
     }
 
     func move(to point: CGPoint) {
         guard let current = previewPlacement else { return }
         previewPlacement = NotchGeometry.dragPlacement(at: point, screenFrame: geometry.screenFrame,
-                                                       queue: dockSize(for: current), placement: current,
+                                                       queue: queueSize(for: current), placement: current,
                                                        grabFraction: dragGrabFraction)
         apply(animated: false)
     }
@@ -799,13 +352,17 @@ final class ScreenHUD {
         hoverOpens = true
         apply(animated: false)
         pointerInside = Self.containsPointer(mouseLocation(), in: hoverRegion)
-        alerts.hold(pointerInside)
     }
 
     private func queueSize(_ config: LogoQueueConfig) -> CGSize {
         guard config.items.isEmpty else { return config.size }
         let run = max(32, config.logo)
         return config.edge.isHorizontal ? CGSize(width: run, height: config.stripThickness) : CGSize(width: config.stripThickness, height: run)
+    }
+
+    /// What a logo queue takes along its edge: the watched agents and anything else run in the last day.
+    private func queueSize(for placement: ScreenPlacement) -> CGSize {
+        queueSize(LogoQueueConfig(items: queueItems, placement: placement))
     }
 
     /// The marks this screen shows: the watched agents and anything else run in the last day.
@@ -818,46 +375,26 @@ final class ScreenHUD {
         let screen = screen
         let placement = placement
         guard placement.mode.isDocked else { return NotchGeometry.detect(screen: screen, placement: placement) }
-        return NotchGeometry.detect(screen: screen, placement: placement, queue: dockSize(for: placement))
-    }
-
-    /// What a docked HUD takes along its edge: the logo queue, or the Simple panel with its margin.
-    private func dockSize(for placement: ScreenPlacement) -> CGSize {
-        if placement.mode == .simple { return SimpleMeterConfig(items: meterItems, placement: placement).stripSize }
-        return queueSize(LogoQueueConfig(items: queueItems, placement: placement, settings: settings.settings))
-    }
-
-    /// The agents with a quota row, each with its tightest window, then those with only a balance.
-    private var meterItems: [SimpleMeterItem] {
-        SimpleMeterItem.items(rows: store.rows, balances: SimpleMeterItem.balances(store),
-                              working: store.queueVendors.filter(\.isWorking).map(\.vendor))
-    }
-
-    private var simpleMeter: SimpleMeterConfig? {
-        guard geometry.mode == .simple else { return nil }
-        return SimpleMeterConfig(items: meterItems, placement: placement)
+        return NotchGeometry.detect(screen: screen, placement: placement, queue: queueSize(for: placement))
     }
 
     private var logoQueue: LogoQueueConfig? {
-        // The geometry still measures the queue when the marks are hidden, so the backdrop keeps the place
-        // and the width it had; only the drawing stops.
+        // The geometry still measures the queue when the marks are hidden, so the strip keeps the place and
+        // the width it had; only the drawing stops.
         guard geometry.mode == .logos, placement.showsLogos else { return nil }
-        let config = LogoQueueConfig(items: queueItems, placement: placement, settings: settings.settings)
+        let config = LogoQueueConfig(items: queueItems, placement: placement)
         return config.items.isEmpty ? nil : config
     }
 
     /// Takes this HUD's windows off screen; the display it belonged to is gone.
     func close() {
-        cancelSessionNavigation()
         materialPreparation = nil
         modifierWatch?.invalidate()
         timer?.invalidate()
-        cardSettle?.cancel()
-        cardSettle = nil
         targetWindowFrame = nil
         geometryTransitionFrame = nil
         island.panel.orderOut(nil)
-        glow.close()
+        shadow.close()
         dragSurface.hide()
     }
 
@@ -869,58 +406,17 @@ final class ScreenHUD {
             collapsedTopRadius: geometry.mode.isDocked ? NotchGeometry.expandedTopRadius : NotchGeometry.collapsedTopRadius,
             collapsedBottomRadius: geometry.cornerRadius,
             lightBorder: systemIsLight,
-            onOpenStats: { [weak self] in self?.handOff { self?.onOpenStats?() } },
             onOpenSettings: { [weak self] in self?.handOff { self?.onOpenSettings?() } },
-            additionalHUDControls: { [weak self] in
-                guard let self else { return AnyView(EmptyView()) }
-                return self.additionalHUDControls { [weak self] in self?.forceCollapse() }
-            },
-            alert: previewPlacement == nil ? activeAlert : nil,
-            onOpenAlert: { [weak self] in self?.openAlert() },
-            onDismissAlert: { [weak self] in self?.dismissCompletionAlert() },
-            onOpenAlertSession: { [weak self] in Task { await self?.openAlertSession() } },
-            onOpenAlertUsage: { [weak self] in self?.openAlertUsage() },
-            sessionNavigationFailed: sessionNavigationFailed,
-            onDecideAlert: { [weak self] decision in self?.decideAlert(decision) },
-            waitingRequests: PermissionRequests.shared.pending,
-            answeringSessionID: answeringSessionID,
-            onAnswerSession: { [weak self] id in self?.answerQuestions(in: id) },
-            onSelectRequest: { [weak self] id in self?.selectRequest(id) },
-            onTyping: { [weak self] typing in self?.setTyping(typing) },
-            showsAlertDetails: open && alerts.current?.inUsagePanel == false,
             animatesGeometry: animated
         )
-        root.onOpenListedSession = { [weak self] id in Task { await self?.openListedSession(id) } }
-        root.failedListedSessionID = failedListedSessionID
-        root.sessionEvents = alerts.sessionEvents
         root.logoQueue = logoQueue
-        root.simpleMeter = simpleMeter
-        root.separatesAgents = placement.separatesAgents && geometry.mode.isDocked
-        root.stripScale = stripScale
-        let focus = focus
-        // The agent whose own card is up has its mark looked at: glanced at while the card is a peek, opened once
-        // a click asked for the whole panel. An event's card leaves its sender's mark to its agent.
-        if open, activeAlert == nil, previewPlacement == nil, let focus {
-            let kind: MarkAttention = pinned ? .opened : .glanced
-            if let index = root.logoQueue?.items.firstIndex(where: { AgentArtwork.markKey($0.vendor) == focus.key }) {
-                root.logoQueue?.items[index].attention = kind
-            }
-            if let index = root.simpleMeter?.items.firstIndex(where: { AgentArtwork.markKey($0.vendor) == focus.key }) {
-                root.simpleMeter?.items[index].attention = kind
-            }
-        }
-        root.focusVendor = focus?.vendor
-        root.peek = focus.map(peek)
-        root.pinned = pinned
-        root.onPin = { [weak self] in self?.pinAgent() }
-        root.botLogos = settings.settings.botLogos
         root.edge = geometry.edge
         // The mode decides the silhouette, not whether there are marks to draw.
         root.hidesSilhouette = geometry.mode.isDocked
         return root
     }
 
-    /// Run during the existing hover delay without touching the visible windows or their current glow.
+    /// Run during the existing hover delay without touching the visible windows or their current shadow.
     private func prepareOpening() {
         guard case .opening = machine.state else { return }
         geometry = resolveGeometry()
@@ -932,21 +428,18 @@ final class ScreenHUD {
         beginMaterialPreparation(inputs: inputs, open: true, height: height, surface: surface)
     }
 
-    @discardableResult
-    private func captureMaterials(inputs: PanelInputs, surface: Surface) -> GlowWindowController.PreparationInputs {
-        glow.capturePreparation(geometry: geometry, island: surface.glowIsland,
-            islandRadius: surface.glowRadius, glow: surface.glowGeometry,
-            outwardOnly: surface.glowSettings.outwardOnly, appearance: inputs.appearance,
-            pattern: surface.glowSettings.pattern(), drawsGlow: surface.drawsGlow)
+    private func captureMaterials(surface: Surface) -> ShadowWindowController.PreparationInputs {
+        shadow.capturePreparation(geometry: geometry, island: surface.shadowIsland, islandRadius: surface.shadowRadius,
+                                  casts: surface.castsShadow)
     }
 
     @discardableResult
     private func beginMaterialPreparation(inputs: PanelInputs, open: Bool, height: CGFloat, surface: Surface,
-                                         captured: GlowWindowController.PreparationInputs? = nil) -> MaterialPreparation {
-        let captured = captured ?? captureMaterials(inputs: inputs, surface: surface)
+                                         captured: ShadowWindowController.PreparationInputs? = nil) -> MaterialPreparation {
+        let captured = captured ?? captureMaterials(surface: surface)
         let render = renderMaterials
-        let installed = glow.installedPreparation(matching: captured)
-        let task: Task<GlowWindowController.PreparedImages?, Never>? = installed == nil
+        let installed = shadow.installedPreparation(matching: captured)
+        let task: Task<ShadowWindowController.PreparedImages?, Never>? = installed == nil
             ? Task.detached(priority: .userInitiated) {
                 guard !Task.isCancelled else { return nil }
                 let images = await render(captured)
@@ -974,66 +467,32 @@ final class ScreenHUD {
     }
 
     func apply(animated: Bool) {
-        if let id = answeringSessionID,
-           !PermissionRequests.shared.pending.contains(where: { $0.sessionID == id && $0.isQuestion }) {
-            answeringSessionID = nil
-            stopTyping()
-        }
         let open = machine.isOpen
         let previousGeometry = geometry
         geometry = resolveGeometry()
         // A changed edge replaces the coordinate system; it is a repositioning, not an expansion.
-        // A separated dock's card moves on its own, inside a window that holds both ends of the move.
-        let cardMoves = !agentMarks.isEmpty && previewPlacement == nil && geometry.edge == previousGeometry.edge
-            && geometry.mode == previousGeometry.mode && geometry.screenFrame == previousGeometry.screenFrame
-            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let animated = animated && geometry.edge == previousGeometry.edge && agentMarks.isEmpty
+        let animated = animated && geometry.edge == previousGeometry.edge
             && geometry.mode == previousGeometry.mode && geometry.screenFrame == previousGeometry.screenFrame
             && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         var root = makeRoot(open: open, animated: animated)
-        // A report can change the token legend without changing the coordinator's observed quota rows.
+        // A report can change the token chart without changing the coordinator's observed quota rows.
         // Validate at consumption as well as when the coordinator applies an update during the delay.
         let inputs = panelInputs
         var prepared = materialPreparation?.inputs == inputs && materialPreparation?.open == open ? materialPreparation : nil
         if open {
-            let height = prepared?.height
+            panelHeight = prepared?.height
                 ?? max(80, min(island.contentHeight(for: root).rounded(), maximumContentHeight))
-            if showsAlertDetails { alertDetailHeight = height }
-            else { panelHeight = height }
         }
-        let surface = surface(open: open, height: showsAlertDetails ? alertDetailHeight : panelHeight)
+        let surface = surface(open: open, height: panelHeight)
         if prepared?.surface != surface { prepared = nil }
-        let captured = captureMaterials(inputs: inputs, surface: surface)
-        let installed = glow.installedPreparation(matching: captured)
+        let captured = captureMaterials(surface: surface)
+        let installed = shadow.installedPreparation(matching: captured)
         let preparingFutureOpening: Bool = if case .opening = machine.state { true } else { false }
         if prepared == nil, installed == nil, !preparingFutureOpening {
-            prepared = beginMaterialPreparation(inputs: inputs, open: open,
-                height: showsAlertDetails ? alertDetailHeight : panelHeight, surface: surface, captured: captured)
+            prepared = beginMaterialPreparation(inputs: inputs, open: open, height: panelHeight, surface: surface,
+                                                captured: captured)
         }
-        var windowFrame = surface.windowFrame
-        let expanded = surface.expanded
-        alertFrame = (activeAlert != nil && !open && expanded) ? windowFrame : nil
-        // What the black shape fills, before the window is stretched to keep a surface under the pointer.
-        let presentation = surface.cardFrame.size
-        if showsAlertDetails {
-            alertHoverFloor = pointerInside ? max(alertHoverFloor, windowFrame.height) : 0
-            let held = ScreenHUD.heldWindowHeight(card: windowFrame.height, floor: alertHoverFloor,
-                                                  pointerInside: pointerInside)
-            if focus != nil {
-                // The canvas already spans the card and the marks; only the surface under the pointer grows.
-                windowFrame.origin.y -= held - windowFrame.height
-                windowFrame.size.height = held
-                windowFrame = windowFrame.intersection(geometry.screenFrame)
-            } else if geometry.mode.isDocked {
-                windowFrame = geometry.expandedFrame(size: CGSize(width: windowFrame.width, height: held))
-            } else {
-                windowFrame.origin.y -= held - windowFrame.height
-                windowFrame.size.height = held
-            }
-        } else {
-            alertHoverFloor = 0
-        }
-        let appearance = store.glowAppearance(light: systemIsLight, on: key)
+        let windowFrame = surface.windowFrame
         let previousCanvas = island.panel.frame
         let previousCard = island.rootView.presentationFrame.map {
             CGRect(x: previousCanvas.minX + $0.minX, y: previousCanvas.maxY - $0.maxY,
@@ -1046,51 +505,23 @@ final class ScreenHUD {
             geometryTransitionFrame = nil
         }
 
-        if cardMoves {
-            if targetWindowFrame != windowFrame || cardSettle == nil {
-                let moved = targetWindowFrame != windowFrame
-                targetWindowFrame = windowFrame
-                // Moving the window re-bases what is drawn in it and stops a card in mid-move, so a window that
-                // already holds the new place is left alone until the card has arrived.
-                if !island.panel.frame.contains(windowFrame) { island.setFrame(island.panel.frame.union(windowFrame)) }
-                island.setVisibleSize(windowFrame.size)
-                if moved || island.panel.frame != windowFrame {
-                    cardSettle?.cancel()
-                    cardSettle = Task { [weak self] in
-                        try? await Task.sleep(for: .seconds(IslandAnimation.duration + 0.05))
-                        guard !Task.isCancelled, let self else { return }
-                        self.cardSettle = nil
-                        if self.targetWindowFrame == windowFrame { self.island.setFrame(windowFrame) }
-                    }
-                }
-            }
-        } else if !animated || targetWindowFrame != windowFrame {
-            cardSettle?.cancel()
-            cardSettle = nil
+        if !animated || targetWindowFrame != windowFrame {
             targetWindowFrame = windowFrame
             if animated {
                 // Every edge uses the same transition canvas. Card geometry supplies the parked anchor;
                 // the union also covers a clamped card and any longer, stationary logo queue.
                 island.setFrame(island.panel.frame.union(windowFrame))
-                island.setVisibleSize(windowFrame.size)
             } else {
                 island.setFrame(windowFrame)
-                island.setVisibleSize(windowFrame.size)
             }
+            island.setVisibleSize(windowFrame.size)
         }
-        glow.update(
+        shadow.update(
             geometry: geometry,
-            island: surface.glowIsland,
-            islandRadius: surface.glowRadius,
-            glow: surface.glowGeometry,
-            outwardOnly: surface.glowSettings.outwardOnly,
-            appearance: appearance,
+            island: surface.shadowIsland,
+            islandRadius: surface.shadowRadius,
+            casts: surface.castsShadow,
             animated: animated,
-            alert: activeAlert,
-            quotaVendors: store.alertPulseVendors,
-            pattern: surface.glowSettings.pattern(),
-            backdrop: surface.backdrop ? geometry.rect : nil,
-            drawsGlow: surface.drawsGlow,
             prepared: prepared?.images ?? installed,
             materialsPending: prepared?.images == nil && installed == nil
         )
@@ -1103,18 +534,17 @@ final class ScreenHUD {
         root.logoQueueFrame = CGRect(x: geometry.rect.minX - canvas.minX,
                                      y: canvas.maxY - geometry.rect.maxY,
                                      width: geometry.rect.width, height: geometry.rect.height)
-        updateClickThrough(geometry.mode.isDocked && !expanded)
+        updateClickThrough(geometry.mode.isDocked && !surface.expanded)
         // A tracking area can report an exit when the window or its hosting view resizes, even though the
         // pointer has not left the visible HUD. Both native events and the coordinator use screen geometry.
         // Collapsed logo queues pass clicks through, so their coordinator alone supplies the events.
         island.onPointerChange = geometry.mode.isDocked
             ? nil
             : { [weak self] _ in self?.samplePointer() }
-        root.presentationSize = presentation
-        root.cardScreenFrame = surface.cardFrame
-        root.presentationFrame = CGRect(x: surface.cardFrame.minX - canvas.minX,
-                                        y: canvas.maxY - surface.cardFrame.maxY,
-                                        width: surface.cardFrame.width, height: surface.cardFrame.height)
+        root.presentationSize = cardFrame.size
+        root.presentationFrame = CGRect(x: cardFrame.minX - canvas.minX,
+                                        y: canvas.maxY - cardFrame.maxY,
+                                        width: cardFrame.width, height: cardFrame.height)
         root.onContentHeight = { [weak self] height in self?.updatePanelHeight(height) }
         root.onGeometryCompletion = { [weak self] in
             // Reversing or repositioning can finish an older animation together with the new one.
@@ -1125,63 +555,26 @@ final class ScreenHUD {
             self.island.setFrame(target)
         }
         island.setRootView(root)
-        if geometryTransitionFrame == nil, cardSettle == nil { island.setFrame(windowFrame) }
+        if geometryTransitionFrame == nil { island.setFrame(windowFrame) }
         updateDragSurface()
         prepareOpening()
     }
 
-    /// One agent's card: a peek, its whole panel, or an event it sent. It floats beside the agent's mark, and
-    /// the canvas holds the card and the strip, so every other mark stays where it is.
-    private func detachedSurface(open: Bool, height: CGFloat, focus: AgentMark) -> Surface {
-        let peek = peek(for: focus)
-        let showsPeek = open && !pinned && activeAlert == nil
-        let size: CGSize = if !open {
-            IslandRootView.dockCompactSize(edge: geometry.edge, collapsedSize: geometry.rect.size, scale: stripScale, wings: compactWings)
-        } else if alerts.current?.inUsagePanel == false {
-            CGSize(width: activeAlert?.detailWidth ?? IslandController.alertDetailWidth, height: height)
-        } else if showsPeek {
-            peek.size
-        } else {
-            CGSize(width: IslandController.agentPanelWidth, height: height)
-        }
-        let cardFrame = Self.detachedFrame(size: size, anchor: focus.anchor, strip: geometry.rect, edge: geometry.edge,
-                                           gap: showsPeek && peek.style == .line ? -peek.tuck : 6,
-                                           screen: geometry.screenFrame)
-        let windowFrame = cardFrame.union(geometry.islandFrame).intersection(geometry.screenFrame).integral
-        // The marks have not moved, so whatever glows behind them goes on doing so.
-        let marks = surface(open: false, height: height, parked: true)
-        return Surface(windowFrame: windowFrame, cardFrame: cardFrame, expanded: true, glowIsland: marks.glowIsland,
-                       glowRadius: marks.glowRadius, glowGeometry: marks.glowGeometry, glowSettings: marks.glowSettings,
-                       backdrop: marks.backdrop, drawsGlow: marks.drawsGlow)
-    }
-
-    /// Both preparation and presentation use the same parked edge, clamping and glow dimensions.
+    /// Both preparation and presentation use the same parked edge, clamping and shadow dimensions.
     private struct Surface: Equatable {
         let windowFrame: CGRect
         let cardFrame: CGRect
         let expanded: Bool
-        let glowIsland: CGRect
-        let glowRadius: CGFloat
-        let glowGeometry: GlowGeometry
-        let glowSettings: GlowSettings
-        let backdrop: Bool
-        let drawsGlow: Bool
+        /// The shape the shadow falls from, in screen coordinates, and its corner.
+        let shadowIsland: CGRect
+        let shadowRadius: CGFloat
+        /// A collapsed logo queue is its marks alone, with no shape to cast a shadow.
+        let castsShadow: Bool
     }
 
-    /// `parked` asks for the collapsed surface whatever is showing: the marks' own, which a detached card keeps.
-    private func surface(open: Bool, height: CGFloat, parked: Bool = false) -> Surface {
-        let expanded = (open || activeAlert != nil) && previewPlacement == nil && !parked
-        if let focus, expanded { return detachedSurface(open: open, height: height, focus: focus) }
-        let compactSize = geometry.mode.isDocked
-            ? IslandRootView.dockCompactSize(edge: geometry.edge, collapsedSize: geometry.rect.size, scale: stripScale, wings: compactWings)
-            : CGSize(width: geometry.rect.width + 2 * (IslandController.alertWingWidth + IslandController.alertSidePadding),
-                     height: max(38, geometry.rect.height))
-        let size = open
-            ? (alerts.current?.inUsagePanel == false
-                ? CGSize(width: activeAlert?.detailWidth ?? IslandController.alertDetailWidth,
-                         height: height)
-                : CGSize(width: IslandController.expandedWidth, height: height))
-            : compactSize
+    private func surface(open: Bool, height: CGFloat) -> Surface {
+        let expanded = open && previewPlacement == nil
+        let size = CGSize(width: IslandController.expandedWidth, height: height)
         // The shoulder curves widen the contact with the parked edge. Clamp their whole canvas, then
         // derive the card's core from it, so even a dock near a corner retains both curved shoulders.
         let flare = open || geometry.mode.isDocked ? NotchGeometry.expandedTopRadius : NotchGeometry.collapsedTopRadius
@@ -1194,8 +587,8 @@ final class ScreenHUD {
                 : geometry.expandedFrame(size: size).insetBy(dx: -flare, dy: 0))
             : geometry.islandFrame
         // A short card must not clip a longer queue. The extra canvas stays transparent and the card
-        // retains its own screen position, including while a reminder's hover floor holds a taller window.
-        let windowFrame = open && geometry.mode.isDocked && activeAlert == nil
+        // retains its own screen position.
+        let windowFrame = open && geometry.mode.isDocked
             ? cardFrame.union(geometry.islandFrame).intersection(geometry.screenFrame)
             : cardFrame
         let islandFrame = expanded
@@ -1203,50 +596,8 @@ final class ScreenHUD {
                 ? cardFrame.insetBy(dx: horizontal ? flare : 0, dy: horizontal ? 0 : flare)
                 : geometry.expandedFrame(size: size))
             : geometry.rect
-        let radius = open ? IslandController.expandedRadius : max(geometry.cornerRadius, activeAlert == nil ? 0 : 14)
-        let current = settings.settings
-        // This screen's own glow, or the default when it has not been given one.
-        let glowSettings = current.glow(on: key)
-        // The glow style is the HUD's backdrop in both modes, but the shape it radiates from differs. The
-        // notch is a small silhouette, so the field reads as a rim around it. A logo queue wants a curtain
-        // exactly as wide as the marks: the shape is a flat lip at the screen's top edge, run wider than the
-        // queue so every cell's nearest point is straight above it and the field falls vertically. The glow
-        // panel then clips that field back to the queue's own column, cutting off the ends that would dip.
-        let parked = geometry.mode.isDocked && !expanded
-        let backdrop = parked && geometry.mode == .logos
-        // Only a silhouette is worth rimming. A logo queue has none — its glow is the backdrop behind the
-        // marks — so once the panel or an event has grown over the place that field belonged, it stops
-        // rather than following the new shape around.
-        let drawsGlow = !geometry.mode.isDocked || backdrop
-        let overhang = GlowWindowController.backdropOverhang(glowSettings)
-        // The lip is a flat line on the screen's top edge, run wider than the queue: every cell's nearest
-        // point is then straight above it, so the field falls vertically instead of curling in at the ends,
-        // and the marks sit inside the field rather than below where it starts.
-        let glowIsland: CGRect = {
-            guard parked else { return islandFrame }
-            switch geometry.edge {
-            case .top:
-                return CGRect(x: geometry.rect.minX - overhang, y: geometry.screenFrame.maxY,
-                              width: geometry.rect.width + overhang * 2, height: 2)
-            case .bottom:
-                return CGRect(x: geometry.rect.minX - overhang, y: geometry.screenFrame.minY - 2,
-                              width: geometry.rect.width + overhang * 2, height: 2)
-            case .left:
-                return CGRect(x: geometry.screenFrame.minX - 2, y: geometry.rect.minY - overhang,
-                              width: 2, height: geometry.rect.height + overhang * 2)
-            case .right:
-                return CGRect(x: geometry.screenFrame.maxX, y: geometry.rect.minY - overhang,
-                              width: 2, height: geometry.rect.height + overhang * 2)
-            }
-        }()
-        let glowRadius = parked ? 0 : radius
-        let glowGeometry = glowSettings
-            .geometry(islandWidth: geometry.edge.isHorizontal ? glowIsland.width : glowIsland.height,
-                      islandHeight: geometry.edge.isHorizontal ? glowIsland.height : glowIsland.width,
-                      islandRadius: glowRadius)
-            .fitted(within: geometry.edge.isHorizontal ? geometry.screenFrame.height : geometry.screenFrame.width)
-        return Surface(windowFrame: windowFrame, cardFrame: cardFrame, expanded: expanded, glowIsland: glowIsland,
-                       glowRadius: glowRadius, glowGeometry: glowGeometry, glowSettings: glowSettings,
-                       backdrop: backdrop, drawsGlow: drawsGlow)
+        let radius = open ? IslandController.expandedRadius : geometry.cornerRadius
+        return Surface(windowFrame: windowFrame, cardFrame: cardFrame, expanded: expanded, shadowIsland: islandFrame,
+                       shadowRadius: radius, castsShadow: expanded || !geometry.mode.isDocked)
     }
 }

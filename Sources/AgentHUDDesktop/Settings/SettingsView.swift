@@ -27,7 +27,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return L10n.text("设置外观、语言、启动方式和客户端回调。", "Appearance, language, startup and client hook preferences.")
         case .sources: return L10n.text("管理实时状态、套餐与显示窗口。", "Manage live status, plans and visible windows.")
-        case .display: return L10n.text("自定义灵动岛光晕与面板内容，更改自动生效。", "Customize your notch and panel. Changes apply automatically.")
+        case .display: return L10n.text("自定义每块屏幕的 HUD 与面板内容，更改自动生效。", "Customize each screen's HUD and the panel. Changes apply automatically.")
         }
     }
 
@@ -59,19 +59,16 @@ struct SettingsView: View {
     let store: UsageStore
     var sourceStatuses: [SourceStatus]?
     var initialProviderID: String?
-    let additionalPages: [DesktopSettingsPage]
     @State private var navigation: SettingsNavigation
     @Environment(\.colorScheme) private var scheme
 
     init(settings: SettingsStore, store: UsageStore, initialTab: SettingsTab = .display,
          navigation: SettingsNavigation? = nil,
-         additionalPages: [DesktopSettingsPage] = [],
          sourceStatuses: [SourceStatus]? = nil, initialProviderID: String? = nil) {
         self.settings = settings
         self.store = store
         self.sourceStatuses = sourceStatuses
         self.initialProviderID = initialProviderID
-        self.additionalPages = additionalPages
         _navigation = State(initialValue: navigation ?? SettingsNavigation(tab: initialTab))
     }
 
@@ -79,7 +76,7 @@ struct SettingsView: View {
         @Bindable var navigation = navigation
         let theme = Theme.forScheme(scheme)
         HStack(spacing: 0) {
-            SettingsSidebar(selection: $navigation.pageID, additionalPages: additionalPages, theme: theme)
+            SettingsSidebar(selection: $navigation.pageID, theme: theme)
                 .frame(width: SettingsWindowLayout.sidebarWidth)
                 .layoutPriority(1)
             Rectangle().fill(theme.sidebarBorder).frame(width: 1)
@@ -102,7 +99,7 @@ struct SettingsView: View {
                 } else {
                     ScrollView {
                         pane(theme)
-                            .frame(maxWidth: additionalPage?.preferredContentWidth ?? 640, alignment: .leading)
+                            .frame(maxWidth: 640, alignment: .leading)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.horizontal, 20)
                             .padding(.bottom, 32)
@@ -123,9 +120,8 @@ struct SettingsView: View {
     }
 
     private var tab: SettingsTab? { SettingsTab(rawValue: navigation.pageID) }
-    private var additionalPage: DesktopSettingsPage? { additionalPages.first { $0.id == navigation.pageID } }
-    private var pageTitle: String { tab?.label ?? additionalPage?.title() ?? "" }
-    private var pageSubtitle: String { tab?.subtitle ?? additionalPage?.subtitle() ?? "" }
+    private var pageTitle: String { tab?.label ?? "" }
+    private var pageSubtitle: String { tab?.subtitle ?? "" }
 
     @ViewBuilder
     private func pane(_ theme: Theme) -> some View {
@@ -136,15 +132,12 @@ struct SettingsView: View {
                                        initialProviderID: initialProviderID)
             case .display: DisplayPane(settings: settings, store: store, theme: theme)
             }
-        } else if let additionalPage {
-            additionalPage.content()
         }
     }
 }
 
 struct SettingsSidebar: View {
     @Binding var selection: String
-    let additionalPages: [DesktopSettingsPage]
     let theme: Theme
 
     var body: some View {
@@ -157,9 +150,6 @@ struct SettingsSidebar: View {
                 .padding(.bottom, 8)
             ForEach(SettingsTab.allCases) { tab in
                 pageButton(id: tab.id, title: tab.label, symbol: tab.symbol, color: tab.color)
-            }
-            ForEach(additionalPages) { page in
-                pageButton(id: page.id, title: page.title(), symbol: page.symbol, color: page.color)
             }
             Spacer()
             HStack(spacing: 10) {

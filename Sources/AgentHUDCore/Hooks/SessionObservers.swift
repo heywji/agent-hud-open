@@ -3,10 +3,13 @@ import Foundation
 /// The host opts into local adapter installation and supplies the executable that handles callbacks.
 public enum SessionObservers {
     /// Points every Agent HUD handler in the clients installed here at `executable`, adding the ones that are missing,
-    /// or, with `enabled` false, takes them all out, whichever copy of Agent HUD wrote them. Every other entry in the
-    /// clients' files is left alone.
+    /// or, with `enabled` false, takes them all out, whichever copy of Agent HUD wrote them. Either way the handlers an
+    /// earlier build installed for features this one leaves out are taken out (`RetiredHooks`), and so are the stop hooks
+    /// the panel does not need (`CompletionHooks.Source.endsRunningTurns`). Every other entry in the clients' files is
+    /// left alone.
     public static func configure(executable: URL, enabled: Bool,
                                  home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        RetiredHooks.remove(executable: executable, home: home)
         if enabled { installObservers(home: home) } else {
             do { try PiSessionObserver.configure(enabled: false, home: home) }
             catch { NSLog("[AgentHUD] Pi observer setup failed: %@", error.localizedDescription) }
@@ -17,21 +20,9 @@ public enum SessionObservers {
             do { try AttentionHooks.configure(source, enabled: enabled, executable: executable, home: home) }
             catch { NSLog("[AgentHUD] Notification hook setup failed for %@: %@", source.rawValue, error.localizedDescription) }
         }
-        for source in PermissionHooks.Source.allCases where source.usesHook && source.isInstalled(home: home) {
-            do { try PermissionHooks.configure(source, enabled: enabled, executable: executable, home: home) }
-            catch { NSLog("[AgentHUD] Permission hook setup failed for %@: %@", source.rawValue, error.localizedDescription) }
-        }
-        if PermissionHooks.Source.codex.isInstalled(home: home) {
-            do { try CodexSessionOrigins.configure(enabled: enabled, executable: executable, home: home) }
-            catch { NSLog("[AgentHUD] Codex origin hook setup failed: %@", error.localizedDescription) }
-        }
-        if PermissionHooks.Source.claude.isInstalled(home: home) {
-            do { try ClaudeSessionOrigins.configure(enabled: enabled, executable: executable, home: home) }
-            catch { NSLog("[AgentHUD] Claude origin hook setup failed: %@", error.localizedDescription) }
-        }
         for source in CompletionHooks.Source.allCases {
             guard AdditionalSource(rawValue: source.rawValue)?.isInstalled(home: home) == true else { continue }
-            do { try CompletionHooks.configure(source, enabled: enabled, executable: executable, home: home) }
+            do { try CompletionHooks.configure(source, enabled: enabled && source.endsRunningTurns, executable: executable, home: home) }
             catch { NSLog("[AgentHUD] Completion hook setup failed for %@: %@", source.rawValue, error.localizedDescription) }
         }
     }

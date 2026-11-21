@@ -6,21 +6,15 @@ import SwiftUI
 ///
 /// A HUD belongs to a screen: two displays can run different modes, be hovered independently and show
 /// different things. What cannot be split lives here — the store and settings they all read, the system
-/// appearance, the pointer, and the rule that an alert belongs on the screen the pointer is on.
+/// appearance and the pointer.
 @MainActor
 final class IslandController {
     static let expandedWidth: CGFloat = 540
-    /// One agent's own panel, on a dock that separates its agents.
-    static let agentPanelWidth: CGFloat = 440
     static let defaultPanelHeight: CGFloat = 326
     static let expandedRadius: CGFloat = 26
-    static let alertWingWidth: CGFloat = 112
-    static let alertSidePadding: CGFloat = 16
-    static let alertDetailWidth: CGFloat = 400
 
     private let store: UsageStore
     private let settings: SettingsStore
-    private let additionalHUDControls: @MainActor (@escaping @MainActor () -> Void) -> AnyView
     private(set) var huds: [String: ScreenHUD] = [:]
     /// Display order, so the primary HUD is stable rather than whatever the dictionary yields.
     private var order: [String] = []
@@ -28,14 +22,11 @@ final class IslandController {
     private var observers: [Any] = []
     private var pointerMonitors: [Any] = []
 
-    var onOpenStats: (() -> Void)? { didSet { huds.values.forEach { $0.onOpenStats = onOpenStats } } }
     var onOpenSettings: (() -> Void)? { didSet { huds.values.forEach { $0.onOpenSettings = onOpenSettings } } }
 
-    init(store: UsageStore, settings: SettingsStore,
-         additionalHUDControls: @escaping @MainActor (@escaping @MainActor () -> Void) -> AnyView = { _ in AnyView(EmptyView()) }) {
+    init(store: UsageStore, settings: SettingsStore) {
         self.store = store
         self.settings = settings
-        self.additionalHUDControls = additionalHUDControls
         rebuild()
 
         observers.append(NotificationCenter.default.addObserver(
@@ -59,22 +50,21 @@ final class IslandController {
         startPointerMonitors()
     }
 
-    /// What every HUD's frame and glow are computed from. Pause expiry and session liveness read the store's
-    /// clock, which ticks every ten seconds, so the values are compared and a tick that changes none of them
-    /// leaves the HUDs alone; the panel's countdowns observe the clock themselves.
+    /// What every HUD's frame is computed from. Session liveness reads the store's clock, which ticks every ten
+    /// seconds, so the values are compared and a tick that changes none of them leaves the HUDs alone; the panel's
+    /// countdowns observe the clock themselves.
     private struct Inputs: Equatable {
         let rows: [AgentRow]
         let sessions: [LiveSession]
-        let isPaused: Bool
-        let glowHidden: Bool
-        let appearance: GlowAppearance
+        /// The marks a logo queue holds.
+        let vendors: [String]
         let settings: AgentHUDCore.Settings
         let agents: [AgentDescriptor]
     }
 
     private var inputs: Inputs {
-        Inputs(rows: store.rows, sessions: store.sessions, isPaused: store.isPaused, glowHidden: store.glowHidden,
-               appearance: store.glowAppearance(light: systemIsLight), settings: settings.settings, agents: settings.agents)
+        Inputs(rows: store.rows, sessions: store.sessions, vendors: store.queueVendors.map(\.vendor),
+               settings: settings.settings, agents: settings.agents)
     }
 
     // MARK: Screens
@@ -87,48 +77,24 @@ final class IslandController {
         rebuild(keys: screens.isEmpty ? ["screen:none"] : screens.map { ScreenIdentity.key(for: $0) }, screens: screens)
     }
 
-    /// One HUD per key, in display order; `screens` holds the display behind each key that has one. The requests a
-    /// dropped HUD held are shown again: their clients are still waiting, whatever happened to the display.
+    /// One HUD per key, in display order; `screens` holds the display behind each key that has one.
     func rebuild(keys: [String], screens: [NSScreen]) {
-        var questions: [IslandAlert] = []
         for key in huds.keys where !keys.contains(key) {
-            guard let hud = huds.removeValue(forKey: key) else { continue }
-            questions += hud.questions
-            hud.close()
+            huds.removeValue(forKey: key)?.close()
         }
         for (index, key) in keys.enumerated() where huds[key] == nil {
             let hud = ScreenHUD(key: key, screen: screens.indices.contains(index) ? screens[index] : nil,
-                                store: store, settings: settings, additionalHUDControls: additionalHUDControls)
+                                store: store, settings: settings)
             hud.systemIsLight = systemIsLight
-            hud.onOpenStats = { [weak self] in self?.onOpenStats?() }
             hud.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
-            hud.onClaimRequest = { [weak self, weak hud] id in
-                guard let self, let hud else { return }
-                self.move(requestID: id, to: hud)
-            }
             huds[key] = hud
         }
         order = keys
-        // Every glow shares one budget, so attaching a display costs frames rather than CPU.
-        GlowAnimator.activeGlows = huds.count
         huds.values.forEach { $0.apply(animated: false) }
-        for question in questions.sorted(by: { ($0.waitingSince ?? .distantFuture) < ($1.waitingSince ?? .distantFuture) }) {
-            present(question)
-        }
-    }
-
-    /// A request picked from the waiting list on another screen than the one it arrived on moves to the screen where
-    /// it was picked, to be answered there.
-    private func move(requestID id: String, to target: ScreenHUD) {
-        for hud in huds.values where hud !== target {
-            guard let request = hud.take(requestID: id) else { continue }
-            target.present(request)
-            return
-        }
     }
 
     /// The displays that get a HUD: every one not switched off. With all of them off the main display keeps
-    /// its HUD anyway, since the menu and alerts need one to act on.
+    /// its HUD anyway, since its panel is the way into Settings.
     private var shownScreens: [NSScreen] {
         let screens = NSScreen.screens
         let shown = screens.filter { settings.settings.screens[ScreenIdentity.key(for: $0)]?.mode != .off }
@@ -136,31 +102,20 @@ final class IslandController {
         return shown
     }
 
-    /// The HUD the tests and the menu act on when no screen is named: the main display's.
+    /// The HUD the tests act on when no screen is named: the main display's.
     var primary: ScreenHUD? {
         NSScreen.main.map { ScreenIdentity.key(for: $0) }.flatMap { huds[$0] } ?? order.first.flatMap { huds[$0] }
     }
 
-    /// The HUD on the screen the pointer is on, which is where an alert belongs and which hover acts on.
+    /// The HUD on the screen the pointer is on, which is the one hover acts on.
     private var underPointer: ScreenHUD? {
         let point = NSEvent.mouseLocation
         let key = NSScreen.screens.first { $0.frame.contains(point) }.map { ScreenIdentity.key(for: $0) }
         return key.flatMap { huds[$0] } ?? primary
     }
 
-    /// The main display's HUD as windows, back to front, for a recording of it and nothing else. The glow's window
-    /// spans the display; what it draws stays within reach of the island, the shadow under an open panel included.
-    var recordingSources: [HUDRecorder.Source] {
-        guard let hud = primary else { return [] }
-        let island = hud.island.panel.frame
-        return [.init(window: hud.glow.panel, bounds: island.insetBy(dx: -Self.glowReach, dy: -Self.glowReach)),
-                .init(window: hud.island.panel, bounds: nil)]
-    }
-    /// Farther than any glow setting or the panel's shadow extends past the island.
-    private static let glowReach: CGFloat = 120
-
     var island: IslandWindowController { primary!.island }
-    var glow: GlowWindowController { primary!.glow }
+    var shadow: ShadowWindowController { primary!.shadow }
     var geometry: NotchGeometry { primary!.geometry }
 
     // MARK: Pointer
@@ -196,17 +151,4 @@ final class IslandController {
     func forceCollapse() { huds.values.forEach { $0.forceCollapse() } }
 
     func pointer(inside: Bool) { underPointer?.pointer(inside: inside) }
-
-    func present(_ alert: QuotaAlert) { present(.quota(alert)) }
-
-    /// An event is shown once, on the screen being looked at. Repeating it on every display would mean
-    /// dismissing the same thing several times, and a screen nobody is facing is not where news belongs. A request
-    /// one screen already holds stays there.
-    func present(_ alert: IslandAlert) {
-        guard !alert.isPersistent || !huds.values.contains(where: { $0.holds(alert.id) }) else { return }
-        underPointer?.present(alert)
-    }
-
-    /// A withdrawn request is taken off whichever screen ended up showing it.
-    func withdraw(requestID: String) { huds.values.forEach { $0.withdraw(requestID: requestID) } }
 }

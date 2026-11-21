@@ -247,25 +247,6 @@ final class ProviderAccountTests: XCTestCase {
         XCTAssertEqual(settings.agents.map(\.id), ["claude-session", accountB.windowID("codex")], "retired accounts leave the settings")
     }
 
-    func testSwitchingAccountsIsNeitherAResetNorAnExhaustion() {
-        var tracker = QuotaAlertTracker()
-        let agents = [descriptor(accountA), descriptor(accountB)]
-        func update(_ current: ProviderAccount, remaining: Double, elapsed: Double) -> QuotaAlertTracker.Update {
-            let other = current == accountA ? accountB : accountA
-            let at = now.addingTimeInterval(elapsed)
-            let snapshot = UsageSnapshot(agentId: current.windowID("codex"), remainingPct: remaining, resetAt: at.addingTimeInterval(3600), updatedAt: at)
-            let report = UsageReport(generatedAt: at, snapshots: [snapshot], sessions: [],
-                accounts: ["Codex": [AccountObservation(account: current, observedAt: at), AccountObservation(account: other, observedAt: now, isCurrent: false)]])
-            return tracker.update(report: report, agents: agents, now: at)
-        }
-        _ = update(accountA, remaining: 0, elapsed: 0)
-        XCTAssertTrue(update(accountB, remaining: 100, elapsed: 120).alerts.isEmpty)
-        XCTAssertTrue(update(accountB, remaining: 100, elapsed: 240).alerts.isEmpty)
-        let back = update(accountA, remaining: 100, elapsed: 360)
-        XCTAssertTrue(back.alerts.isEmpty, "signing back in starts a new baseline")
-        XCTAssertTrue(back.criticalAgentIDs.isEmpty)
-    }
-
     func testClaudeLoginChangeDuringTheQueryDiscardsTheReading() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("agenthud-account-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

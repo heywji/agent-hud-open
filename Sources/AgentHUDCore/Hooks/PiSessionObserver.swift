@@ -62,7 +62,6 @@ public enum PiSessionObserver {
         let state: SessionTurn.State
         let startedAtMs: Int64
         let observedAtMs: Int64
-        var navigationTarget: SessionNavigationTarget? = nil
 
         var turn: SessionTurn {
             .init(provider: "Pi", sessionID: sessionID, turnID: turnID, state: state,
@@ -73,12 +72,10 @@ public enum PiSessionObserver {
             var value = OpenAgentSession(id: sessionID, client: .pi, title: title, workspace: workspace,
                 path: sessionFile ?? "", start: RecordCoding.date(startedAtMs), end: RecordCoding.date(observedAtMs), turns: [turn])
             value.titleSource = .observer
-            value.navigation = .init(observedAt: RecordCoding.date(observedAtMs), target: navigationTarget)
             if let model, let providerID { value.setModel(model, provider: providerID) }
             if state == .completed {
                 value.completions = [.init(sessionID: sessionID, vendor: "Pi", turnID: turnID,
-                    task: title, model: model ?? "Unknown", startedAt: RecordCoding.date(startedAtMs), completedAt: RecordCoding.date(observedAtMs),
-                    navigationTarget: navigationTarget)]
+                    task: title, model: model ?? "Unknown", startedAt: RecordCoding.date(startedAtMs), completedAt: RecordCoding.date(observedAtMs))]
             }
             return value
         }

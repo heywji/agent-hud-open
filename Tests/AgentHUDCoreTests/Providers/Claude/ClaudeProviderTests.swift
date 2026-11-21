@@ -634,38 +634,6 @@ final class UsageAnalyticsTests: XCTestCase {
 
     let now = DateParsing.iso8601("2026-09-06T06:32:00Z")! // Sunday 14:32 CST
 
-    func testActivityGridNormalises() {
-        let monday = DateParsing.iso8601("2026-08-31T02:00:00Z")! // Monday 10:00 CST
-        let usage = [
-            UsageBucket(start: monday, agentId: "a", tokensIn: 400, tokensOut: 100),
-            UsageBucket(start: monday.addingTimeInterval(3600), agentId: "a", tokensIn: 200, tokensOut: 50),
-        ]
-        let grid = UsageAnalytics.activityGrid(usage: usage, since: .distantPast, calendar: calendar)
-        XCTAssertEqual(grid.rows[0][10], 1)
-        XCTAssertEqual(grid.rows[0][11], 0.5)
-        XCTAssertEqual(grid.rows[6][10], 0)
-        XCTAssertEqual(grid.tokens[0][10], 500)
-        XCTAssertEqual(grid.tokens[0][11], 250)
-        XCTAssertEqual(grid.tokens[6][10], 0)
-    }
-
-    func testActivityGridRetainsEveryModelAndVersion() {
-        let monday = DateParsing.iso8601("2026-08-31T02:00:00Z")!
-        let usage: [UsageBucket] = [
-            .init(start: monday, agentId: "claude-model:opus-4-8", tokensIn: 80, tokensOut: 20),
-            .init(start: monday.addingTimeInterval(900), agentId: "claude-model:opus-4-8", tokensIn: 8, tokensOut: 2),
-            .init(start: monday, agentId: "claude-model:opus-5", tokensIn: 150, tokensOut: 50),
-            .init(start: monday, agentId: "codex-model:new-model", tokensIn: 1, tokensOut: 0),
-            .init(start: monday.addingTimeInterval(-900), agentId: "outside-range", tokensIn: 999, tokensOut: 0),
-        ]
-        let grid = UsageAnalytics.activityGrid(usage: usage, since: monday, calendar: calendar)
-        XCTAssertEqual(grid.tokensByModel[0][10], ["claude-model:opus-4-8": 110, "claude-model:opus-5": 200, "codex-model:new-model": 1])
-        XCTAssertEqual(grid.tokens[0][10], 311)
-        XCTAssertEqual(grid.rows[0][10], 1)
-        XCTAssertEqual(grid.tokensByModel[0][11], [:])
-        XCTAssertEqual(grid.tokens.flatMap { $0 }.reduce(0, +), 311)
-    }
-
     func testBurnRateStartsAfterAnObservedReset() {
         let samples = [
             QuotaSample(agentId: "a", timestamp: now.addingTimeInterval(-3600), remainingPct: 50),

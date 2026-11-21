@@ -1,9 +1,9 @@
 import XCTest
 @testable import AgentHUDCore
 
-/// The sample is the one the iPhone's demo shows (`DemoFleet`): these figures are that demo's, read at the same time.
+/// The sample data the other tests are written against: these figures are its own, read at one fixed time.
 final class DemoDataTests: XCTestCase {
-    private let now = DemoClock.parse("2026-10-12T09:41:00+08:00")!
+    private let now = try! Date("2026-10-12T09:41:00+08:00", strategy: .iso8601)
 
     override func setUp() {
         super.setUp()
@@ -16,7 +16,7 @@ final class DemoDataTests: XCTestCase {
     }
 
     private func report(_ rows: [AgentDescriptor] = DemoData.agents) -> UsageReport {
-        DemoUsageProvider.report(agents: rows, historyHours: 169, now: now, stage: nil)
+        DemoUsageProvider.report(agents: rows, historyHours: 169, now: now)
     }
 
     func testTheWindowsAreNamedAndKeyedAsTheirProvidersBuildThem() {

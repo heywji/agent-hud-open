@@ -26,7 +26,7 @@ final class IslandWindowController {
 
     func setRootView(_ view: IslandRootView) {
         hosting.rootView = view
-        // Commit SwiftUI's layout in the same run-loop turn as the glow layers.
+        // Commit SwiftUI's layout in the same run-loop turn as the shadow layer.
         hosting.layoutSubtreeIfNeeded()
     }
 

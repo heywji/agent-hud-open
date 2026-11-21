@@ -8,7 +8,6 @@ final class LogoEdgeDistanceTests: XCTestCase {
     private let screen = CGRect(x: -1600, y: -200, width: 1600, height: 900)
 
     func testChangingLogoSizeKeepsItsVisibleEdgeAtTheConfiguredDistanceOnEveryEdgeAndScale() throws {
-        let settings = Settings()
         for edge in HUDEdge.allCases {
             for scale in [CGFloat(1), 2] {
                 let view = LogoQueueLayerView()
@@ -17,14 +16,14 @@ final class LogoEdgeDistanceTests: XCTestCase {
                         let placement = ScreenPlacement(edge: edge, offset: 0.35, logoSize: size,
                                                         logoEdgeDistance: distance, gapScale: 0.35)
                         let config = LogoQueueConfig(items: [
-                            LogoQueueItem(vendor: "Claude", isWorking: false),
-                            LogoQueueItem(vendor: "DeepSeek", isWorking: false),
-                            LogoQueueItem(vendor: "GitHub Copilot", isWorking: false),
-                            LogoQueueItem(vendor: "OpenCode", isWorking: false),
-                        ], placement: placement, settings: settings)
+                            LogoQueueItem(vendor: "Claude"),
+                            LogoQueueItem(vendor: "DeepSeek"),
+                            LogoQueueItem(vendor: "GitHub Copilot"),
+                            LogoQueueItem(vendor: "OpenCode"),
+                        ], placement: placement)
                         let strip = NotchGeometry.stripRect(queue: config.size, frame: screen, placement: placement)
                         view.setFrameSize(strip.size)
-                        view.apply(config: config, light: false, scale: scale, animates: false)
+                        view.apply(config: config, light: false, scale: scale)
                         for (index, mark) in view.marks.enumerated() {
                             let visible = try visibleRect(of: mark)
                             let global = CGRect(x: strip.minX + visible.minX, y: strip.maxY - visible.maxY,
@@ -33,10 +32,6 @@ final class LogoEdgeDistanceTests: XCTestCase {
                                            "\(config.items[index].vendor), \(edge), size \(size), distance \(distance), scale \(scale)")
                             XCTAssertEqual(mark.frame.width - 2 / scale, size, accuracy: 0.000001)
                             XCTAssertEqual(mark.frame.height - 2 / scale, size, accuracy: 0.000001)
-                            if let actor = view.actors[index] {
-                                XCTAssertEqual(actor.layer.position.x, mark.frame.midX, accuracy: 0.000001)
-                                XCTAssertEqual(actor.layer.position.y, mark.frame.midY, accuracy: 0.000001)
-                            }
                         }
                         let nominal = view.marks[0].frame.insetBy(dx: 1 / scale, dy: 1 / scale)
                         let next = view.marks[1].frame.insetBy(dx: 1 / scale, dy: 1 / scale)
@@ -52,8 +47,8 @@ final class LogoEdgeDistanceTests: XCTestCase {
     func testLogoStripThicknessDoesNotFollowTheMenuBar() {
         for size in [20.0, 30, 36] {
             let placement = ScreenPlacement(logoSize: size, logoEdgeDistance: 0)
-            let config = LogoQueueConfig(items: [LogoQueueItem(vendor: "Claude", isWorking: false)],
-                                         placement: placement, settings: Settings())
+            let config = LogoQueueConfig(items: [LogoQueueItem(vendor: "Claude")],
+                                         placement: placement)
             let detected = NotchGeometry.detect(screen: nil, placement: placement, queue: config.size)
             XCTAssertEqual(detected.menuBarHeight, 24)
             XCTAssertEqual(detected.rect.height, size,
@@ -64,12 +59,10 @@ final class LogoEdgeDistanceTests: XCTestCase {
     func testOpeningAndClosingCanvasKeepsThirtyPointLogosAtZeroDistanceOnEveryEdge() async throws {
         _ = NSApplication.shared
         let display = CGRect(x: -20000, y: -20000, width: 1200, height: 900)
-        var settings = Settings()
-        settings.botLogos = false
         for edge in HUDEdge.allCases {
             let placement = ScreenPlacement(edge: edge, logoSize: 30, logoEdgeDistance: 0)
-            let config = LogoQueueConfig(items: [LogoQueueItem(vendor: "DeepSeek", isWorking: false)],
-                                         placement: placement, settings: settings)
+            let config = LogoQueueConfig(items: [LogoQueueItem(vendor: "DeepSeek")],
+                                         placement: placement)
             let strip = NotchGeometry.stripRect(queue: config.size, frame: display, placement: placement)
             let geometry = NotchGeometry(screenFrame: display, mode: .logos, edge: edge, hasNotch: false,
                                          rect: strip, cornerRadius: 10, backingScale: 2, menuBarHeight: 38)
@@ -77,7 +70,7 @@ final class LogoEdgeDistanceTests: XCTestCase {
             let expanded = geometry.expandedFrame(size: CGSize(width: 540, height: 300))
             var root = IslandRootView(store: nil, isOpen: false, collapsedSize: strip.size,
                                       collapsedTopRadius: 8, collapsedBottomRadius: 10,
-                                      lightBorder: false, onOpenStats: {})
+                                      lightBorder: false)
             root.hidesSilhouette = true
             root.edge = edge
             root.logoQueue = config
@@ -95,7 +88,7 @@ final class LogoEdgeDistanceTests: XCTestCase {
                                              collapsedSize: rebased.collapsedSize,
                                              collapsedTopRadius: rebased.collapsedTopRadius,
                                              collapsedBottomRadius: rebased.collapsedBottomRadius,
-                                             lightBorder: rebased.lightBorder, onOpenStats: rebased.onOpenStats)
+                                             lightBorder: rebased.lightBorder)
                 current.hidesSilhouette = rebased.hidesSilhouette
                 current.edge = rebased.edge
                 current.logoQueue = rebased.logoQueue

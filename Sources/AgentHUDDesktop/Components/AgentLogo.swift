@@ -73,12 +73,6 @@ enum AgentArtwork {
         monochromeVendors.contains(canonical(vendor))
     }
 
-    /// Vendors whose mark is bundled, for surfaces that show the whole catalog. The second copy of a mark that
-    /// ships in two variants is not a vendor of its own.
-    static var allVendors: [String] {
-        fileNames.keys.filter { !$0.hasSuffix("-dark") }.sorted()
-    }
-
     /// The mark a vendor is drawn with, as a key: vendors that share one piece of artwork share this one.
     /// The logo queue collapses on it rather than on the vendor name, because two identical marks in a row
     /// are two the eye cannot tell apart, and telling agents apart at a glance is what the queue is for.

@@ -138,7 +138,7 @@ final class PiCodexTests: XCTestCase {
         XCTAssertEqual(recovered.observation(accountID: piID)?.observedAt, clock.now)
     }
 
-    func testSameAccountResetProducesOneEventPerWindowAndOneHistorySample() async throws {
+    func testSameAccountReadByTwoClientsTakesOneHistorySamplePerWindow() async throws {
         let a = try PiCodexClient.parse(Data(Self.payload.utf8), expectedAccount: "workspace")
         let reset = try PiCodexClient.parse(Data(Self.payload.replacingOccurrences(of: "used_percent\":20", with: "used_percent\":0")
             .replacingOccurrences(of: "used_percent\":30", with: "used_percent\":0").utf8), expectedAccount: "workspace")
@@ -146,14 +146,11 @@ final class PiCodexTests: XCTestCase {
         let clock = TestClock(now), history = QuotaHistoryStore()
         let provider = CodexUsageProvider(readLimits: { try await native.next()! }, transcripts: CodexTranscriptStore(roots: []),
             history: history, clock: { clock.now }, readPiLimits: { try await pi.next() })
-        var tracker = QuotaAlertTracker()
         await provider.refreshAccountUsage(historyHours: 24)
-        let first = try await provider.fetchUsage(agents: [], historyHours: 24)
-        XCTAssertTrue(tracker.update(report: first, agents: first.discoveredAgents, now: clock.now).alerts.isEmpty)
+        _ = try await provider.fetchUsage(agents: [], historyHours: 24)
         clock.advance(61)
         await provider.refreshAccountUsage(historyHours: 24)
-        let second = try await provider.fetchUsage(agents: [], historyHours: 24)
-        XCTAssertEqual(tracker.update(report: second, agents: second.discoveredAgents, now: clock.now).alerts.count, 2)
+        _ = try await provider.fetchUsage(agents: [], historyHours: 24)
         let count = await history.count
         XCTAssertEqual(count, 6, "three windows sampled twice, irrespective of client count")
     }

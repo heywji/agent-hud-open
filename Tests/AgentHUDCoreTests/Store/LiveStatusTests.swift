@@ -22,13 +22,13 @@ final class LiveStatusTests: XCTestCase {
         }
         let report = UsageReport(generatedAt: now, snapshots: [], sessions: sessions, consumers: consumers, usage: buckets)
         store.replace(report: report)
-        let columns = store.tokenColumns
+        let columns = store.hudTokenColumns
         for vendor in SessionSource.agentVendors {
             settings.update { $0.setLiveStatus(for: vendor, enabled: false) }
             XCTAssertEqual(store.liveSessions.count, sessions.count - 1, vendor)
             XCTAssertFalse(store.liveSessions.contains { store.sessionSource($0).vendor == vendor })
             XCTAssertEqual(Set(store.sessions.map(\.id)), Set(sessions.map(\.id)))
-            XCTAssertEqual(store.tokenColumns, columns)
+            XCTAssertEqual(store.hudTokenColumns, columns)
             XCTAssertEqual(store.report, report, "Preferences must not turn source observations into fake ended events")
             let reloaded = SettingsStore(defaults: defaults)
             XCTAssertFalse(reloaded.settings.liveStatusEnabled(for: vendor.lowercased()))

@@ -34,6 +34,10 @@ public enum CompletionHooks {
     public enum Source: String, CaseIterable, Sendable {
         case antigravity, cursor, copilot, codebuddy, qwen
         var vendor: String { AdditionalSource(rawValue: rawValue)!.vendor }
+        /// Whether the panel needs this client's stop hook: GitHub Copilot CLI's log records turns in flight that only the
+        /// hook ends. The other clients' sessions are never shown running, so their stop hooks only fed the turn reminders
+        /// this build leaves out, and every start takes them out of the clients' settings (`SessionObservers`).
+        public var endsRunningTurns: Bool { self == .copilot }
         var format: any CompletionHookFormat.Type {
             switch self {
             case .antigravity: AntigravityHookFormat.self
@@ -53,8 +57,7 @@ public enum CompletionHooks {
         let title = event.workspace.map { URL(fileURLWithPath: $0).lastPathComponent }.flatMap { $0.isEmpty ? nil : $0 }
         return SessionCompletion(sessionID: "\(source.rawValue):\(event.session)", vendor: source.vendor, turnID: event.turn,
             task: title.map { "\(source.vendor) · \($0)" } ?? source.vendor,
-            model: event.model ?? source.vendor, startedAt: nil, completedAt: now,
-            navigationTarget: source == .antigravity ? .antigravityConversation(id: event.session) : nil)
+            model: event.model ?? source.vendor, startedAt: nil, completedAt: now)
     }
 
     public static func record(source: Source, data: Data, now: Date = Date(), directory: URL = directory) throws {
@@ -74,10 +77,7 @@ public enum CompletionHooks {
         guard FileManager.default.fileExists(atPath: inbox.folder.path) else { return [] }
         return try inbox.files(keys: [.contentModificationDateKey]).compactMap { url in
             guard let date = try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, date >= since else { return nil }
-            var event = try JSONDecoder().decode(SessionCompletion.self, from: HookInbox.data(of: url))
-            if source == .antigravity, event.sessionID.hasPrefix("antigravity:") {
-                event.navigationTarget = .antigravityConversation(id: String(event.sessionID.dropFirst("antigravity:".count)))
-            }
+            let event = try JSONDecoder().decode(SessionCompletion.self, from: HookInbox.data(of: url))
             return event.vendor == source.vendor && event.completedAt >= since ? event : nil
         }
     }

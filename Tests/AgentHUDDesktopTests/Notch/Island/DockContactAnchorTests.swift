@@ -123,7 +123,7 @@ final class DockContactAnchorTests: XCTestCase {
     private func root(store: UsageStore, open: Bool, edge: HUDEdge, strip: CGSize) -> IslandRootView {
         var view = IslandRootView(store: store, isOpen: open, collapsedSize: strip,
                                   collapsedTopRadius: IslandRootView.expandedTopRadius,
-                                  collapsedBottomRadius: 10, lightBorder: false, onOpenStats: {})
+                                  collapsedBottomRadius: 10, lightBorder: false)
         view.hidesSilhouette = true
         view.edge = edge
         // No LogoQueueConfig: the contact measurement contains only the black card and its footer.

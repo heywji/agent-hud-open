@@ -15,27 +15,19 @@ private let sixRows: [AgentDescriptor] = [
 final class SettingsTests: XCTestCase {
     func testDefaultsMatchDesign() {
         let s = Settings()
-        XCTAssertEqual(s.breathSeconds, 3)
-        XCTAssertEqual(s.breathAmplitude, 0.6)
-        XCTAssertEqual(s.glowRange, 14)
-        XCTAssertEqual(s.glowBlur, 8)
-        XCTAssertTrue(s.glowOutwardOnly)
-        XCTAssertEqual(s.glowBrightness, 0.9)
         XCTAssertEqual(s.hoverDelayMs, 400)
         XCTAssertFalse(s.openImmediatelyAtTop)
         XCTAssertEqual(s.collapseDelayMs, 200)
         XCTAssertTrue(s.launchAtLogin)
-        XCTAssertTrue(s.showMenuBarIcon)
         XCTAssertEqual(s.appearance, .system)
         XCTAssertTrue(s.showIslandTokens)
         XCTAssertEqual(s.hoverDelay, 0.4, accuracy: 1e-9)
     }
 
     func testDecodesMissingAndRemovedFields() throws {
-        let decoded = try JSONDecoder().decode(Settings.self, from: Data(#"{"glowRange":20,"glowPosition":"below","showIslandTrend":false,"pollInterval":300}"#.utf8))
-        XCTAssertEqual(decoded.glowRange, 20)
-        XCTAssertEqual(decoded.glowBlur, 8)
-        XCTAssertTrue(decoded.glowOutwardOnly)
+        // A fuller build's glow, bot, approval and menu bar preferences are among the removed ones.
+        let decoded = try JSONDecoder().decode(Settings.self, from: Data(#"{"glowRange":20,"glowPosition":"below","showIslandTrend":false,"pollInterval":300,"botLogos":false,"approvalWaitMinutes":3,"showMenuBarIcon":false,"screenGlow":{"a":{"range":3}},"hoverDelayMs":300}"#.utf8))
+        XCTAssertEqual(decoded, Settings().with { $0.hoverDelayMs = 300 })
         XCTAssertEqual(decoded.appearance, .system)
         XCTAssertTrue(decoded.showIslandTokens)
         XCTAssertFalse(decoded.openImmediatelyAtTop)
@@ -54,43 +46,20 @@ final class SettingsTests: XCTestCase {
     func testRoundTrip() throws {
         let original = Settings().with {
             $0.appearance = .light
-            $0.glowOutwardOnly = false
+            $0.requiresOptionToOpen = true
             $0.showIslandQuota = false; $0.showIslandTokens = false
             $0.showIslandSessions = false
-            $0.botLogos = false
             $0.openImmediatelyAtTop = true
         }
         let data = try JSONEncoder().encode(original)
         XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: data), original)
     }
 
-    func testSettingsSavedBeforeBotLogosKeepThemOn() throws {
-        let saved = try JSONDecoder().decode(Settings.self, from: Data("{}".utf8))
-        XCTAssertTrue(saved.botLogos)
-    }
-
-    func testGlowSizeBoundsWhenDecodingSettings() throws {
-        for (range, blur, expectedRange, expectedBlur) in [
-            // Above the bound and below it: both ends clamp, whatever the bound is set to.
-            (Settings.glowSizeRange.upperBound * 2, Settings.glowSizeRange.upperBound + 10,
-             Settings.glowSizeRange.upperBound, Settings.glowSizeRange.upperBound),
-            (-1, -1, 0, 0),
-            (0, Settings.glowSizeRange.upperBound, 0, Settings.glowSizeRange.upperBound),
-            (Settings.glowSizeRange.upperBound, 0, Settings.glowSizeRange.upperBound, 0),
-        ] {
-            let data = try JSONEncoder().encode(["glowRange": range, "glowBlur": blur])
-            let decoded = try JSONDecoder().decode(Settings.self, from: data)
-            XCTAssertEqual(decoded.glowRange, expectedRange)
-            XCTAssertEqual(decoded.glowBlur, expectedBlur)
-            XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(decoded)), decoded)
-        }
-    }
-
     func testWithReturnsCopy() {
         let a = Settings()
-        let b = a.with { $0.glowRange = 20 }
-        XCTAssertEqual(a.glowRange, 14)
-        XCTAssertEqual(b.glowRange, 20)
+        let b = a.with { $0.hoverDelayMs = 300 }
+        XCTAssertEqual(a.hoverDelayMs, 400)
+        XCTAssertEqual(b.hoverDelayMs, 300)
     }
 }
 
@@ -319,23 +288,21 @@ final class SettingsStoreTests: XCTestCase {
         let defaults = makeDefaults()
         let store = SettingsStore(defaults: defaults, defaultAgents: sixRows)
         store.update {
-            $0.glowRange = 18
-            $0.glowOutwardOnly = false
+            $0.collapseDelayMs = 350
+            $0.requiresOptionToOpen = true
             $0.showIslandTokens = false
             $0.openImmediatelyAtTop = true
         }
         store.setAgent(id: "chatgpt", enabled: false)
         store.moveAgent(id: "codex", to: 0)
-        store.markOnboardingComplete()
 
         let reloaded = SettingsStore(defaults: defaults)
-        XCTAssertEqual(reloaded.settings.glowRange, 18)
-        XCTAssertFalse(reloaded.settings.glowOutwardOnly)
+        XCTAssertEqual(reloaded.settings.collapseDelayMs, 350)
+        XCTAssertTrue(reloaded.settings.requiresOptionToOpen)
         XCTAssertFalse(reloaded.settings.showIslandTokens)
         XCTAssertTrue(reloaded.settings.openImmediatelyAtTop)
         XCTAssertEqual(reloaded.agents.first?.id, "codex")
         XCTAssertFalse(reloaded.agents.first { $0.id == "chatgpt" }!.enabled)
-        XCTAssertTrue(reloaded.hasCompletedOnboarding)
         XCTAssertEqual(reloaded.enabledAgents.count, 3)
     }
 
@@ -343,7 +310,6 @@ final class SettingsStoreTests: XCTestCase {
         let store = SettingsStore(defaults: makeDefaults())
         XCTAssertEqual(store.settings, Settings())
         XCTAssertTrue(store.agents.isEmpty, "every row is discovered from local data")
-        XCTAssertFalse(store.hasCompletedOnboarding)
     }
 
     func testPlaceholdersEarlierVersionsSeededAreDroppedAndOtherRowsKeepTheirSwitches() throws {
@@ -473,7 +439,7 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(store.rows.map(\.id), (DemoData.claudeRows + DemoData.codexRows).map(\.id))
     }
 
-    func testAgentsWithoutDataStayOutOfGlow() async {
+    func testAgentsWithoutDataHaveNoLevel() async {
         let suite = "AgentHUDTests.\(UUID().uuidString)"
         let codex = DemoData.codexRows[0]
         let rows = [codex, AgentDescriptor(id: "newcomer", vendor: "Newcomer", model: "Plan", source: "", enabled: true)]
@@ -483,7 +449,7 @@ final class UsageStoreTests: XCTestCase {
         await store.refresh()
         XCTAssertFalse(store.isLoading)
         XCTAssertEqual(store.rows.map(\.id), [codex.id, "newcomer"])
-        XCTAssertEqual(store.levels.count, 1, "only the row demo data has a reading for glows")
+        XCTAssertEqual(store.levels.count, 1, "only the row the sample data has a reading for has a level")
     }
 
     func testInitialLoadingStopsOnFailureOrPause() async {
@@ -511,8 +477,14 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(store.maxUsedPct, 79)
         XCTAssertTrue(store.hasLiveSession)
 
-        let filling = DemoStage(script: DemoScript(used: ["codex": 93], steps: []), now: Date())
-        store.replace(report: DemoUsageProvider.report(agents: store.settings.agents, historyHours: 24, now: Date(), stage: filling))
+        // Codex's week filling up to 93% used.
+        let now = Date(), agents = store.settings.agents
+        let filling = DemoData.snapshots(for: agents, now: now).map { snapshot in
+            guard agents.first(where: { $0.id == snapshot.agentId })?.windowKey == "codex" else { return snapshot }
+            return UsageSnapshot(agentId: snapshot.agentId, remainingPct: 7, weeklyRemainingPct: 7, resetAt: snapshot.resetAt,
+                                 windowDuration: snapshot.windowDuration, weeklyResetAt: snapshot.weeklyResetAt, updatedAt: now)
+        }
+        store.replace(report: UsageReport(generatedAt: now, snapshots: filling, sessions: DemoData.sessions(now: now)))
         XCTAssertEqual(store.rows.map(\.level), [.ok, .warning, .ok, .critical, .ok, .ok])
         XCTAssertEqual(store.maxUsedPct, 93)
     }
@@ -554,17 +526,12 @@ final class UsageStoreTests: XCTestCase {
         store.replace(report: UsageReport(generatedAt: Date(), snapshots: [], sessions: [],
             consumers: sixRows, usage: usage))
 
-        func total() -> Int { store.tokenColumns.reduce(0) { $0 + $1.total } }
+        func total() -> Int { store.hudTokenColumns.reduce(0) { $0 + $1.total } }
         XCTAssertEqual(total(), 1200, "quota settings do not exclude token spenders")
         store.settings.setAgent(id: "claude-opus", enabled: false)
         XCTAssertEqual(total(), 1200)
         store.settings.setAgent(id: "codex", enabled: false)
         XCTAssertEqual(total(), 1200)
-        for size in TokenBucketSize.allCases {
-            store.tokenBucketSize = size
-            XCTAssertEqual(store.statsRange, .hours24)
-            XCTAssertEqual(total(), 1200)
-        }
     }
 
     func testQuotaForecastUsesOnlyTheHoveredWindowsInsights() throws {
@@ -579,11 +546,10 @@ final class UsageStoreTests: XCTestCase {
         }
         store.replace(report: UsageReport(generatedAt: now, snapshots: snapshots, sessions: [],
             insightsByAgent: ["claude-opus": insights(hours: 1), "codex": insights(hours: 2.5)]))
-        store.selectedQuotaId = "codex"
         XCTAssertEqual(try XCTUnwrap(store.quotaForecastHint(for: "claude-opus")), "耗尽 ~1小时")
         XCTAssertEqual(try XCTUnwrap(store.quotaForecastHint(for: "codex")), "耗尽 ~2小时30分")
         XCTAssertEqual(try XCTUnwrap(store.quotaForecastHint(for: "claude-sonnet")), "预测记录不足",
-                      "a row without its own samples must not use the selected row or global forecast")
+                      "a row without its own samples must not use another row's or a global forecast")
         XCTAssertNil(store.quotaForecastHint(for: "missing"))
         store.settings.update { $0.showResetCountdown = false }
         XCTAssertEqual(try XCTUnwrap(store.quotaForecastHint(for: "codex")), "耗尽 ~2小时30分",
@@ -611,7 +577,7 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertNil(store.quotaTokensPerHour(for: "missing"))
     }
 
-    func testDisablingAgentDropsItFromGlow() async {
+    func testDisablingAgentDropsItsLevel() async {
         let store = makeStore(rows: DemoData.agents)
         await store.refresh()
         XCTAssertEqual(store.levels, [.ok, .warning, .ok, .ok, .ok, .ok, .warning], "six windows, then DeepSeek's balance")
@@ -641,11 +607,11 @@ final class UsageStoreTests: XCTestCase {
                 "claude-session": [opus.id, sonnet.id], "claude-weekly-opus": [opus.id], "codex-weekly": [codex.id],
             ]))
         XCTAssertEqual(store.consumers.map(\.id), consumers.map(\.id))
-        XCTAssertEqual(store.statsSessions.map(\.agentId), consumers.map(\.id))
+        XCTAssertEqual(store.sessions.map(\.agentId), consumers.map(\.id))
         XCTAssertEqual(store.subscriptions, ["Claude": "max"])
 
         store.settings.setAgent(id: "codex-weekly", enabled: true)
-        XCTAssertEqual(store.statsSessions.map(\.agentId), consumers.map(\.id))
+        XCTAssertEqual(store.sessions.map(\.agentId), consumers.map(\.id))
         store.settings.setAgent(id: "claude-weekly-opus", enabled: false)
         XCTAssertEqual(store.consumers.map(\.id), consumers.map(\.id))
         XCTAssertEqual(store.subscriptions, ["Codex": "pro"])
@@ -656,29 +622,5 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(store.sessions.count, 3)
         XCTAssertEqual(store.consumers.count, 3)
         XCTAssertTrue(store.subscriptions.isEmpty)
-    }
-
-    func testSessionListCoversTheLastWeekWhateverTheChartRange() {
-        let store = makeStore()
-        let now = Date()
-        func session(_ id: String, startedHoursAgo: Double, endedHoursAgo: Double? = nil) -> LiveSession {
-            LiveSession(id: id, agentId: "codex", task: id, terminal: nil,
-                        startedAt: now.addingTimeInterval(-startedHoursAgo * 3600),
-                        endedAt: endedHoursAgo.map { now.addingTimeInterval(-$0 * 3600) },
-                        pctOfWindow: nil, tokensIn: 0, tokensOut: 0, observedAt: now)
-        }
-        store.replace(report: UsageReport(generatedAt: now, snapshots: [], sessions: [
-            session("running", startedHoursAgo: 240),
-            session("recent", startedHoursAgo: 10, endedHoursAgo: 2),
-            session("today", startedHoursAgo: 20, endedHoursAgo: 8),
-            session("week", startedHoursAgo: 96, endedHoursAgo: 72),
-            session("older", startedHoursAgo: 240, endedHoursAgo: 200),
-            session("future", startedHoursAgo: -24),
-        ]))
-        // A session read in flight is listed whenever it started, with its reading as its last event.
-        for range in StatsRange.allCases {
-            store.setStatsRange(range)
-            XCTAssertEqual(store.statsSessions.map(\.id), ["future", "running", "recent", "today", "week"], "\(range)")
-        }
     }
 }

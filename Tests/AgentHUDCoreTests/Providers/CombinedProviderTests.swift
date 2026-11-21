@@ -97,9 +97,6 @@ final class CombinedProviderTests: XCTestCase {
         XCTAssertEqual(combined.periods?.tokens[.days7]?.mapValues(\.total), ["claude": 100, "codex": 300],
                        "usage a source reports itself joins the ledger's periods")
         XCTAssertEqual(combined.periods?.tokens[.days30], combined.periods?.tokens[.days7])
-        XCTAssertEqual(store.statsActivity.rows.flatMap { $0 }.filter { $0 > 0 }, [1])
-        XCTAssertEqual(store.statsActivity.tokens.flatMap { $0 }.filter { $0 > 0 }, [400], "hover totals include every vendor")
-        XCTAssertEqual(store.statsActivity.tokensByModel.flatMap { $0 }.filter { !$0.isEmpty }, [["claude": 100, "codex": 300]])
         store.stop()
     }
 

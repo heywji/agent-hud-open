@@ -117,9 +117,6 @@ final class ChartDataTests: XCTestCase {
             let columns = ChartData.tokenBars(usage: usage, agentIds: [old.agentId], range: .hours5,
                 now: now, dimensions: dimensions)
             XCTAssertEqual(columns.reduce(0) { $0 + $1.total }, expected)
-            let grid = UsageAnalytics.activityGrid(usage: usage, since: now.addingTimeInterval(-3600),
-                calendar: .current, dimensions: dimensions)
-            XCTAssertEqual(grid.tokens.flatMap { $0 }.reduce(0, +), expected)
         }
     }
 

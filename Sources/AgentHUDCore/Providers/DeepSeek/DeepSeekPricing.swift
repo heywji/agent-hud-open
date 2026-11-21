@@ -3,8 +3,6 @@ import Foundation
 /// The price of a DeepSeek Harness call on the account it was billed to, from the model catalog: yuan on a Chinese
 /// account, US dollars on an international one. Estimates are local Harness usage, not account invoices.
 public enum DeepSeekPricing {
-    public static let checkedOn = ModelCatalog.checkedOn
-    public static let sourceURL = URL(string: "https://api-docs.deepseek.com/quick_start/pricing/")!
 
     public static func isPeak(_ date: Date) -> Bool { ModelCatalog.isPeak(date) }
 

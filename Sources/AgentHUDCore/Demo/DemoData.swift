@@ -1,10 +1,9 @@
 import AgentHUDSupport
 import Foundation
 
-/// The sample every device's demo shows: one Claude account and one Codex account with their quota windows, a DeepSeek
-/// balance, nine sessions and a month of tokens. Rows, readings and sessions are shaped as the providers shape real
-/// ones. The iPhone's `DemoFleet` holds the same accounts, sessions and generators: a figure changed here is changed
-/// there.
+/// The sample data the tests are written against: one Claude account and one Codex account with their quota windows, a
+/// DeepSeek balance, nine sessions and a month of tokens. Rows, readings and sessions are shaped as the providers shape
+/// real ones. The app itself never shows it.
 public enum DemoData {
     // MARK: Accounts and quota windows
 
@@ -72,8 +71,7 @@ public enum DemoData {
         }
     }
 
-    /// The rows a demo starts with: both accounts' windows, and DeepSeek's models, which are its rows as an API billed by
-    /// use. The tests and snapshots are written against these.
+    /// The sample's rows: both accounts' windows, and DeepSeek's models, which are its rows as an API billed by use.
     public static var agents: [AgentDescriptor] { claudeRows + codexRows + consumers.filter { $0.vendor == "DeepSeek" } }
 
     /// The other vendors the app ships artwork for: a row and a reading each, remaining share and seconds to its reset.
@@ -86,34 +84,29 @@ public enum DemoData {
         ("qwen", "Qwen", "Code", 47, 2 * 3600 + 30 * 60), ("pi", "Pi", "Agent", 60, 3 * 3600),
     ]
 
-    /// Every vendor the app ships artwork for, all switched on. This is what the running demo uses, so the HUD is shown
-    /// carrying a full queue rather than the marks of the sample's three vendors.
+    /// Every vendor the app ships artwork for, all switched on: a full logo queue rather than the marks of the sample's
+    /// three vendors.
     public static var everyAgent: [AgentDescriptor] {
         agents + extras.map { AgentDescriptor(id: $0.id, vendor: $0.vendor, model: $0.model, source: L10n.sourceNotConnected, enabled: true) }
     }
 
-    /// A window's reading, with a playing script's share used in place of the sample's where it has set one.
-    static func reading(_ key: String, stage: DemoStage?) -> Reading? {
-        guard var reading = readings[key] else { return nil }
-        if let used = stage?.used[key] { reading.used = used }
-        return reading
-    }
+    /// A window's reading.
+    static func reading(_ key: String) -> Reading? { readings[key] }
 
     /// The readings of the sample's windows among `rows`, and of the other vendors' rows among them.
-    /// - stage: a playing script's readings, which take the place of the sample's where it has set any.
-    public static func snapshots(for rows: [AgentDescriptor]? = nil, now: Date, stage: DemoStage? = nil) -> [UsageSnapshot] {
+    public static func snapshots(for rows: [AgentDescriptor]? = nil, now: Date) -> [UsageSnapshot] {
         let rows = rows ?? agents
         // A provider reports its account's week beside each window: Claude's weekly window, a Codex bucket's own.
         func week(of row: AgentDescriptor) -> Reading? {
             switch row.windowKey {
-            case let key where key.hasPrefix("claude-"): reading("claude-weekly", stage: stage)
-            case "codex": reading("codex", stage: stage)
-            case let key where key.hasPrefix("codex:spark:"): reading("codex:spark:secondary", stage: stage)
+            case let key where key.hasPrefix("claude-"): reading("claude-weekly")
+            case "codex": reading("codex")
+            case let key where key.hasPrefix("codex:spark:"): reading("codex:spark:secondary")
             default: nil
             }
         }
         return rows.compactMap { row in
-            if row.account != nil, let reading = reading(row.windowKey, stage: stage) {
+            if row.account != nil, let reading = reading(row.windowKey) {
                 let week = week(of: row)
                 return UsageSnapshot(agentId: row.id, remainingPct: QuotaMath.remaining(usedPercent: reading.used),
                                      weeklyRemainingPct: week.map { QuotaMath.remaining(usedPercent: $0.used) },
@@ -121,7 +114,7 @@ public enum DemoData {
                                      weeklyResetAt: week.map { now.addingTimeInterval($0.resetIn) }, updatedAt: now)
             }
             guard let extra = extras.first(where: { $0.id == row.id }) else { return nil }
-            return UsageSnapshot(agentId: row.id, remainingPct: stage?.used[row.id].map { 100 - $0 } ?? extra.remaining,
+            return UsageSnapshot(agentId: row.id, remainingPct: extra.remaining,
                                  resetAt: extra.resetIn.map { now.addingTimeInterval($0) },
                                  windowDuration: extra.resetIn == nil ? nil : (row.id == "antigravity" ? 24 : 5) * 3600, updatedAt: now)
         }
@@ -129,8 +122,8 @@ public enum DemoData {
 
     /// What the last week says of a window: how fast it burns, when it would run out at that rate, and the waits at its
     /// cap. nil for a row that is no window of the sample.
-    public static func insights(for row: AgentDescriptor, now: Date, stage: DemoStage? = nil) -> UsageInsights? {
-        guard row.account != nil, let reading = reading(row.windowKey, stage: stage) else { return nil }
+    public static func insights(for row: AgentDescriptor, now: Date) -> UsageInsights? {
+        guard row.account != nil, let reading = reading(row.windowKey) else { return nil }
         return UsageInsights(burnRatePctPerHour: reading.burn,
                              timeToExhaust: reading.burn.flatMap { $0 > 0 ? (100 - reading.used) / $0 * 3600 : nil },
                              weeklyCapHits: reading.caps?.hits ?? 0, weeklyWaitTotal: reading.caps?.wait ?? 0,
@@ -184,7 +177,7 @@ public enum DemoData {
         let seed: Int
         let idle: Double
         let client: String
-        /// In a turn now, where no script says which sessions run.
+        /// In a turn now.
         var running = false
         /// The turn that came back after its cache had lapsed.
         var lapse: Int?
@@ -222,15 +215,12 @@ public enum DemoData {
     /// The model a Claude session hands part of every fourth turn to.
     private static let helper = consumerID("Claude", "claude-haiku-4-5")
 
-    /// - stage: a playing script decides which sessions run and when the others ended; without one the first two run.
-    public static func sessions(now: Date, stage: DemoStage? = nil) -> [LiveSession] {
+    /// The sample's sessions; the first two run.
+    public static func sessions(now: Date) -> [LiveSession] {
         let usage = sessionUsage(now: now), home = FileManager.default.homeDirectoryForCurrentUser.path
         return plans.map { plan in
             let last = plan.lastActivity(now)
-            var start = plan.start(now), end: Date? = plan.running ? nil : last
-            if let stage {
-                if let since = stage.running[plan.id] { (start, end) = (since, nil) } else { end = stage.ended[plan.id] ?? last }
-            }
+            let start = plan.start(now), end: Date? = plan.running ? nil : last
             // The session's own counts: what its own model spent, without the sub-agent's.
             let own = usage[plan.id]?.models.first { $0.agentId == plan.agentId }?.tokens ?? .init()
             let directory = home + plan.project.dropFirst()
@@ -428,67 +418,6 @@ public enum DemoData {
                 return UsageBucket(start: start, agentId: id, tokensIn: total * 4 / 5, tokensOut: total - total * 4 / 5,
                                    cacheReadTokens: total * (position + 1))
             }
-        }
-    }
-
-    // MARK: First launch and requests
-
-    /// The sources the demo's first-launch screen lists.
-    public static var sources: [SourceStatus] {
-        [
-            SourceStatus(id: "claude-code", name: "Claude", detail: L10n.text("额度、会话与用量统计", "Quota, sessions and usage"), state: .ready(plan: "max_20x")),
-            SourceStatus(id: "codex-cli", name: "Codex", detail: L10n.text("额度、会话与用量统计", "Quota, sessions and usage"), state: .ready(plan: "pro")),
-            SourceStatus(id: "deepseek", name: "DeepSeek", detail: L10n.text("余额、会话与用量统计", "Balance, sessions and usage"), state: .ready(plan: nil)),
-            SourceStatus(id: "antigravity", name: "Antigravity", detail: L10n.text("安装后自动出现", "Appears once installed"), state: .notDetected),
-        ]
-    }
-
-    /// The requests the demo shows: clients caught mid-task, the way a working morning actually looks — the test run
-    /// the iPhone's demo asks about, one edit worth reading, one build, one ticket and one file. No client is waiting
-    /// behind them, so answering one only takes it off the HUD.
-    public static func permissionRequests(now: Date = Date()) -> [PermissionRequest] {
-        [("demo-tests", -40.0), ("demo-edit", -38), ("demo-build", -124), ("demo-ticket", -71), ("demo-read", -9)]
-            .compactMap { permissionRequest($0.0, at: now.addingTimeInterval($0.1)) }
-    }
-
-    /// One of the demo's requests by id, as asked at `at`.
-    public static func permissionRequest(_ id: String, at: Date) -> PermissionRequest? {
-        switch id {
-        case "demo-tests":
-            return PermissionRequest(
-                id: "demo-tests", source: .claude, sessionID: "s1", toolName: "Bash",
-                summary: L10n.text("运行测试", "Run the test suite"), detail: "swift test --filter SyncRecordTests",
-                cwd: "~/work/agent-hud", at: at)
-        case "demo-edit":
-            return PermissionRequest(
-                id: "demo-edit", source: .claude, sessionID: "demo-1", toolName: "Edit",
-                summary: "Avatar.tsx", detail: "~/Projects/acme-web/src/components/Avatar.tsx", cwd: "~/Projects/acme-web",
-                path: "~/Projects/acme-web/src/components/Avatar.tsx",
-                removed: "  const initials = user.name.slice(0, 2)", added: "  const initials = user?.name?.slice(0, 2) ?? '?'",
-                suggestions: [.object([
-                    "type": .string("addRules"), "behavior": .string("allow"),
-                    "destination": .string("localSettings"),
-                    "rules": .array([.object(["toolName": .string("Edit"), "ruleContent": .string("src/**")])]),
-                ])],
-                at: at)
-        case "demo-build":
-            return PermissionRequest(
-                id: "demo-build", source: .codex, sessionID: "demo-2", toolName: "Bash",
-                summary: L10n.text("构建生产版本", "Build for production"), detail: "npm run build",
-                cwd: "~/Projects/acme-api", at: at)
-        case "demo-ticket":
-            return PermissionRequest(
-                id: "demo-ticket", source: .codebuddy, sessionID: "demo-3",
-                toolName: "mcp__linear__create_issue", summary: "linear · create_issue",
-                detail: "team: Mobile\ntitle: Settings screen crashes when offline",
-                cwd: "~/Projects/acme-mobile", at: at)
-        case "demo-read":
-            return PermissionRequest(
-                id: "demo-read", source: .claude, sessionID: "demo-4", toolName: "Read",
-                summary: "tsconfig.base.json", detail: "~/Projects/acme-shared/tsconfig.base.json", cwd: "~/Projects/acme-web",
-                path: "~/Projects/acme-shared/tsconfig.base.json", at: at)
-        default:
-            return nil
         }
     }
 }

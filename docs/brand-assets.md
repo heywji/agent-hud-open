@@ -22,7 +22,7 @@ Claude, OpenAI (shown as ChatGPT), Antigravity, DeepSeek, Grok, GitHub Copilot, 
 | `qwen.png` | `light/qwen-color.png` |
 | `qoder.png`, `qoder-dark.png` | `light/qoder-color.png`, `dark/qoder-color.png` |
 
-The PNG files are unchanged (640 × 640); only the names differ: the `-color` suffix is dropped, and `openai.png`, `githubcopilot.png` and `hermesagent.png` are stored as `chatgpt.png`, `copilot.png` and `hermes.png`. Codex rows reuse the ChatGPT artwork under their own name. Claude, Antigravity, DeepSeek, OpenClaw, CodeBuddy and Qwen Code keep their source colors; the OpenAI mark is stored as shipped and tinted green (`#10A37F`) at render time for ChatGPT; the monochrome Grok, GitHub Copilot and Hermes Agent marks are rendered as template images, so they follow the foreground color in light and dark appearance. Qoder ships one file per background, because the light half of its mark is the background's own colour; the three Qoder builds share both files. The package's MIT license is bundled as `LobeIcons-LICENSE.txt`.
+The PNG files are unchanged (640 × 640); only the names differ: the `-color` suffix is dropped, and `openai.png`, `githubcopilot.png` and `hermesagent.png` are stored as `chatgpt.png`, `copilot.png` and `hermes.png`. Codex rows reuse the ChatGPT artwork under their own name. Claude, Antigravity, DeepSeek, OpenClaw, CodeBuddy and Qwen Code keep their source colors; the OpenAI mark is stored as shipped and tinted green (`#10A37F`) at render time for ChatGPT; the monochrome Grok, GitHub Copilot and Hermes Agent marks are rendered as template images, so they follow the foreground color in light and dark appearance. Qoder ships one file per background, because the light half of its mark is the background's own colour; the three Qoder builds share both files, which stay bundled although nothing in this build shows the Qoder builds. The package's MIT license is bundled as `LobeIcons-LICENSE.txt`.
 
 ## Cursor, Grok Bot, OpenCode, Kimi, GLM, Pi, ZCode and WorkBuddy
 
@@ -43,7 +43,7 @@ Grok Bot's 256 × 256 PNG is extracted unchanged from the application's icon set
 
 ## Rendering rules
 
-Every logo is drawn into a 16 × 16 point image. Grok, Cursor, Kimi, Pi, GitHub Copilot, Hermes Agent and ZCode are template images (monochrome, foreground-colored); Claude, ChatGPT (tinted), Antigravity, DeepSeek, Grok Bot, GLM, OpenCode, OpenClaw, CodeBuddy, WorkBuddy, Qwen Code and Qoder are drawn as original images. SwiftUI views and the status-item menu use the same images.
+The panel and the Settings window draw every logo from a 16 × 16 point image. Grok, Cursor, Kimi, Pi, GitHub Copilot, Hermes Agent and ZCode are template images (monochrome, foreground-colored); Claude, ChatGPT (tinted), Antigravity, DeepSeek, Grok Bot, GLM, OpenCode, OpenClaw, CodeBuddy, WorkBuddy, Qwen Code and Qoder are drawn as original images, OpenCode's and Qoder's from the light or dark file the current appearance calls for. A logo queue instead draws the bundled artwork at its own logo size, always the dark file where there are two, with a one-pixel outline baked around the mark's silhouette and the template marks filled white, since it sits on the wallpaper.
 
 ## Licenses and trademarks
 
@@ -55,6 +55,7 @@ Lobe Icons are MIT-licensed (`LobeIcons-LICENSE.txt`). Brand names and marks bel
 | --- | --- |
 | Bundled logos and license files | `Sources/AgentHUDDesktop/Resources/` |
 | Resource lookup and logo drawing | `Sources/AgentHUDDesktop/Components/AppResources.swift`, `AgentLogo.swift` |
+| A logo queue's marks, baked with their outline | `Sources/AgentHUDDesktop/Notch/Island/LogoImages.swift`, `LogoQueueView.swift` |
 
 ## Related
 

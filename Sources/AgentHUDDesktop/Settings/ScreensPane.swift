@@ -7,7 +7,6 @@ import AgentHUDCore
 /// display with no notch stops pretending to have one.
 struct ScreensPane: View {
     let settings: SettingsStore
-    /// Where the Simple preview's figures come from; without it the preview shows sample ones.
     var store: UsageStore? = nil
     let theme: Theme
 
@@ -60,20 +59,6 @@ struct ScreensPane: View {
         )
     }
 
-    /// The panel as this screen's settings draw it, laid along the top edge whichever edge it is parked on.
-    private var previewMeter: SimpleMeterConfig {
-        var sample = placement
-        sample.edge = .top
-        var items = store.map {
-            SimpleMeterItem.items(rows: $0.rows, balances: SimpleMeterItem.balances($0),
-                                  working: $0.queueVendors.filter(\.isWorking).map(\.vendor))
-        } ?? []
-        if items.isEmpty { items = SimpleMeterItem.samples }
-        // The preview shows what the bot switch does even while nothing is running.
-        if sample.simpleBots, !items.contains(where: \.isWorking) { items[0].isWorking = true }
-        return SimpleMeterConfig(items: items, placement: sample)
-    }
-
     var body: some View {
         SettingsSection(title: L10n.text("屏幕", "Screens"),
                         subtitle: L10n.text("每块屏幕单独设置。", "Set each display on its own."), theme: theme) {
@@ -88,7 +73,6 @@ struct ScreensPane: View {
             SettingRow(label: L10n.text("HUD 形态", "HUD"), subtitle: subtitle) {
                 SegmentedPills(options: [
                     SegmentOption(value: HUDMode.notch, label: L10n.text("刘海", "Notch")),
-                    SegmentOption(value: HUDMode.simple, label: L10n.text("简约", "Simple")),
                     SegmentOption(value: HUDMode.logos, label: L10n.text("动态", "Dynamic")),
                     SegmentOption(value: HUDMode.off, label: L10n.text("关闭", "Off")),
                 ], selection: modeBinding, theme: theme)
@@ -107,15 +91,6 @@ struct ScreensPane: View {
                     .accessibilityIdentifier("hud-reset-position")
                     .disabled(current == nil)
             }
-            if placement.mode.isDocked {
-                SettingsDivider(theme: theme)
-                SettingsToggleRow(
-                    label: L10n.text("按 agent 分开", "Separate agents"),
-                    subtitle: L10n.text("悬停某个标志只展开该 agent 的面板；请求和提醒从发出它的 agent 的标志旁展开，其他标志保持不动。",
-                                        "Hovering a mark opens that agent's own panel. Requests and reminders open beside the mark of the agent that sent them, and the other marks stay."),
-                    isOn: binding(\.separatesAgents)
-                )
-            }
             if placement.mode == .logos {
                 let size = placement.logoSize
                 let points: (Double) -> String = { String(format: L10n.text("%.0f pt", "%.0f pt"), $0) }
@@ -132,49 +107,9 @@ struct ScreensPane: View {
                 SettingsDivider(theme: theme)
                 SettingsToggleRow(
                     label: L10n.text("显示 Logo", "Show logos"),
-                    subtitle: L10n.text("关掉只留背景；背景仍占着这些 Logo 的位置和宽度。",
-                                        "Off leaves the backdrop alone, still where the logos would have been."),
+                    subtitle: L10n.text("关掉后 HUD 仍占着这些 Logo 的位置和宽度，悬停那里照样展开面板。",
+                                        "Off, the HUD still takes the logos' place and width, and hovering there still opens the panel."),
                     isOn: binding(\.showsLogos)
-                )
-            }
-            if placement.mode == .simple {
-                let preview = previewMeter
-                SettingsDivider(theme: theme)
-                SettingsPreview {
-                    Color.clear.frame(height: 84)
-                        .overlay {
-                            SimpleMeterView(config: preview)
-                                .frame(width: preview.stripSize.width, height: preview.stripSize.height)
-                        }
-                }
-                SliderRow(label: L10n.text("大小", "Size"), value: binding(\.simpleSize),
-                          range: ScreenPlacement.simpleSizeRange, step: 1,
-                          format: { String(format: "%.0f pt", $0) }, theme: theme)
-                SettingsDivider(theme: theme)
-                SettingsToggleRow(
-                    label: L10n.text("显示圆环", "Show rings"),
-                    subtitle: L10n.text("每个 agent 用得最多的额度窗口，画成套在标志外的圆环。",
-                                        "Each agent's most used quota window, as a ring round its mark."),
-                    isOn: binding(\.showsRings)
-                )
-                if placement.showsRings {
-                    SettingsDivider(theme: theme)
-                    SliderRow(label: L10n.text("圆环粗细", "Ring thickness"), value: binding(\.ringWidth),
-                              range: ScreenPlacement.ringWidthRange, step: 0.5,
-                              format: { String(format: "%.1f pt", $0) }, theme: theme)
-                }
-                SettingsDivider(theme: theme)
-                SettingsToggleRow(
-                    label: L10n.text("显示数字", "Show numbers"),
-                    subtitle: L10n.text("在标志旁写出已用百分比。", "The percentage used, beside the mark."),
-                    isOn: binding(\.showsNumbers)
-                )
-                SettingsDivider(theme: theme)
-                SettingsToggleRow(
-                    label: L10n.text("Bot 动画", "Bot animation"),
-                    subtitle: L10n.text("工作中的 agent，标志变成它的 Bot；空闲时偶尔变成 Bot 活动几秒。",
-                                        "A working agent's mark becomes its bot. Idle marks become bots for a few seconds now and then."),
-                    isOn: binding(\.simpleBots)
                 )
             }
         }
@@ -186,9 +121,6 @@ struct ScreensPane: View {
 
     private var subtitle: String {
         guard let current else { return "" }
-        if placement.mode == .simple {
-            return L10n.text("贴着屏幕边缘的悬浮面板，没有背景光晕。", "A floating panel on a screen edge, with no glow behind it.")
-        }
         if placement.mode == .logos {
             return L10n.text("贴着屏幕边缘停靠，向屏幕内展开。", "Dock on a screen edge and open inward.")
         }

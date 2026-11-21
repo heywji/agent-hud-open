@@ -146,12 +146,6 @@ public struct SessionUsage: Hashable, Codable, Sendable {
         let total = total, prompt = total.tokensIn + total.cacheReadTokens
         return prompt > 0 ? Double(total.cacheReadTokens) / Double(prompt) : nil
     }
-
-    /// How full the context of the latest call was, 0…1; nil without both sizes.
-    public var contextFill: Double? {
-        guard let contextTokens, let contextWindow, contextWindow > 0 else { return nil }
-        return Double(contextTokens) / Double(contextWindow)
-    }
 }
 
 /// Which ledger contributions hold one session: its own log or id, and a key prefix under which its sub-agents' logs lie.

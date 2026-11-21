@@ -37,7 +37,7 @@ final class UnknownQuotaReadingTests: XCTestCase {
         XCTAssertFalse(row.assessment.confirmsEvents)
         XCTAssertEqual(row.assessment.status, .normal)
         XCTAssertNil(view.maxUsedPct)
-        XCTAssertTrue(view.glowSegments.isEmpty)
+        XCTAssertTrue(view.levelSegments.isEmpty)
         XCTAssertNil(view.outlook(for: agent.id))
         XCTAssertNil(view.forecastHint(for: agent.id))
         XCTAssertNil(view.tokensPerHour(for: agent.id))
@@ -67,28 +67,6 @@ final class UnknownQuotaReadingTests: XCTestCase {
         XCTAssertEqual(insights.weeklyCapHits, 0)
         XCTAssertNil(QuotaForecast.hint(snapshot: unknown, insights: oldInsights, now: now))
         XCTAssertEqual(QuotaMath.outlook(snapshot: unknown, insights: oldInsights, now: now), .noEstimate)
-    }
-
-    func testUnknownBreaksAlertBaselineWithoutInventingZeroOrReset() {
-        var tracker = QuotaAlertTracker()
-        func update(_ remaining: Double?, _ elapsed: Double) -> QuotaAlertTracker.Update {
-            tracker.update(report: report(remaining: remaining, elapsed: elapsed), agents: [agent], now: now.addingTimeInterval(elapsed))
-        }
-        XCTAssertTrue(update(60, 0).alerts.isEmpty)
-        let unknown = update(nil, 60)
-        XCTAssertTrue(unknown.alerts.isEmpty)
-        XCTAssertTrue(unknown.criticalAgentIDs.isEmpty)
-        XCTAssertTrue(unknown.exhaustedAgentIDs.isEmpty)
-        let recovered = update(0, 120)
-        XCTAssertTrue(recovered.alerts.isEmpty, "the first known value after an unknown reading is a new baseline")
-        XCTAssertTrue(recovered.criticalAgentIDs.isEmpty)
-        XCTAssertTrue(recovered.exhaustedAgentIDs.isEmpty)
-        XCTAssertEqual(update(100, 180).alerts.map(\.kind), [.reset], "a genuine full value still confirms a reset")
-        let depleted = update(0, 240)
-        XCTAssertEqual(depleted.alerts.map(\.kind), [.exhaustion])
-        XCTAssertEqual(depleted.exhaustedAgentIDs, [agent.id], "a genuine zero still confirms exhaustion")
-        XCTAssertTrue(update(nil, 300).alerts.isEmpty)
-        XCTAssertTrue(update(100, 360).alerts.isEmpty, "unknown must not be mistaken for an exhausted value before recovery")
     }
 
     func testSnapshotsDecodeEarlierNumbersAndPersistUnknownValues() throws {

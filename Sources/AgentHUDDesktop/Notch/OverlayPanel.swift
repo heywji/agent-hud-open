@@ -1,6 +1,6 @@
 import AppKit
 
-/// Borderless, non-activating overlay used for the glow, the island and its hover popups.
+/// Borderless, non-activating overlay used for the island, its shadow and its hover popups.
 /// Lives above the menu bar on every Space, including full-screen apps, and never takes focus — except while the user
 /// is typing into a field on it, and then without activating the app, so the app underneath stays in front.
 final class OverlayPanel: NSPanel {

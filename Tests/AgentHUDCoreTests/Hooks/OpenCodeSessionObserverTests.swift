@@ -82,20 +82,15 @@ final class OpenCodeSessionObserverTests: XCTestCase, @unchecked Sendable {
                                                       model: "", startedAt: nil, completedAt: now).id)
         XCTAssertTrue(report.turns.isEmpty)
         XCTAssertEqual(report.sessions.first?.tokensIn, 12)
-        XCTAssertEqual(reported.navigationTarget, .iTermSession(id: "w0t0p0:exact-terminal"))
-        XCTAssertEqual(report.sessions.first?.navigationTarget, reported.navigationTarget)
-        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(completion.utf8)) as? [String: Any])
-        legacy.removeValue(forKey: "navigationTarget")
-        XCTAssertNil(try OpenCodeSessionObserver.read(JSONSerialization.data(withJSONObject: legacy)).navigationTarget)
+        // A record an earlier observer wrote with the terminal it ran in still reads; the terminal is not kept.
+        let legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(completion.utf8)) as? [String: Any])
+        XCTAssertNotNil(legacy["navigationTarget"])
 
         let store = OpenAgentLocalStore(paths: paths)
-        for (index, target) in [SessionNavigationTarget.iTermSession(id: "w1t2p0:new-terminal"), nil].enumerated() {
+        for index in 0..<2 {
             var resumed = legacy
             resumed["turnID"] = "resumed_\(index)"
             resumed["completedAtMs"] = milliseconds(now) - Int64(1 - index) * 1000
-            if let target {
-                resumed["navigationTarget"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(target))
-            }
             try write(JSONSerialization.data(withJSONObject: resumed),
                       to: paths.openCodeTurns.appendingPathComponent("resumed_\(index).json"))
             let merged = await store.index(since: now.addingTimeInterval(-86400))
@@ -103,9 +98,7 @@ final class OpenCodeSessionObserverTests: XCTestCase, @unchecked Sendable {
                 fetchQuota: { _, _ in throw ProviderFailure.format }, history: QuotaHistoryStore(), clock: { now }, ledger: .inMemory())
             let refreshed = try await refreshedProvider.fetchUsage(agents: [], historyHours: 168)
             XCTAssertEqual(refreshed.completions.count, index + 2)
-            XCTAssertEqual(refreshed.sessions.first?.navigationTarget, target)
-            XCTAssertTrue(refreshed.completions.allSatisfy { $0.navigationTarget == target },
-                          "the latest source replaces or clears destinations of every earlier completion")
+            XCTAssertNil(refreshed.sessions.first?.navigationTarget)
         }
 
         // A title OpenCode never replaced names nothing: the workspace folder stands in.

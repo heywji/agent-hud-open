@@ -16,7 +16,7 @@ public struct AgentRow: Hashable, Sendable, Identifiable {
 
     public var id: String { agent.id }
 
-    /// Other accounts show their last reading without a status level, so they stay out of the glow and alerts.
+    /// Other accounts show their last reading without a status level.
     public var isCurrentAccount: Bool { assessment.isCurrentAccount }
 
     /// Share of the window already consumed, for forecasts and projections.

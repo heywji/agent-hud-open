@@ -15,8 +15,6 @@ final class HUDDragWindowController {
     var onBegin: ((CGPoint) -> Void)? { didSet { surface.onBegin = onBegin } }
     var onDrag: ((CGPoint) -> Void)? { didSet { surface.onDrag = onDrag } }
     var onEnd: (() -> Void)? { didSet { surface.onEnd = onEnd } }
-    /// A press let go before it became a pick-up: a plain click on the HUD.
-    var onClick: (() -> Void)? { didSet { surface.onClick = onClick } }
     var isDragging: Bool { surface.isDragging }
     var isPressed: Bool { surface.isPressed }
     /// The press has become a pick-up, by travel or by holding.
@@ -35,13 +33,11 @@ final class HUDDragWindowController {
         surface.setAccessibilityLabel(L10n.text("拖动 HUD", "Move HUD"))
     }
 
-    /// `outline` is the dashed shape in screen coordinates, for a HUD whose drawn panel is smaller than its grab
-    /// surface; without one the dashes follow the surface itself.
-    func show(frame: CGRect, outlined: Bool = true, outline: (rect: CGRect, radius: CGFloat)? = nil) {
+    /// The dashes follow the surface itself.
+    func show(frame: CGRect, outlined: Bool = true) {
         panel.setFrame(frame, display: false)
         surface.frame = CGRect(origin: .zero, size: frame.size)
         surface.isOutlined = outlined
-        surface.outlineShape = outline.map { ($0.rect.offsetBy(dx: -frame.minX, dy: -frame.minY), $0.radius) }
         surface.updateOutline()
         panel.orderFrontRegardless()
     }
@@ -65,14 +61,12 @@ private final class HUDDragView: NSView {
     var isPressed: Bool { downAt != nil }
     var isOutlined = false
     var holdDelay: TimeInterval = 0.3
-    var outlineShape: (rect: CGRect, radius: CGFloat)?
     var outlineBounds: CGRect { outline.path?.boundingBoxOfPath ?? .zero }
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
     var onBegin: ((CGPoint) -> Void)?
     var onDrag: ((CGPoint) -> Void)?
     var onEnd: (() -> Void)?
-    var onClick: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -95,8 +89,8 @@ private final class HUDDragView: NSView {
         CATransaction.setDisableActions(true)
         outline.opacity = isOutlined || isArmed ? 1 : 0
         outline.frame = bounds
-        let rect = outlineShape?.rect ?? bounds.insetBy(dx: 2, dy: 2)
-        let radius = max(0, min(outlineShape?.radius ?? 7, min(rect.width, rect.height) / 2))
+        let rect = bounds.insetBy(dx: 2, dy: 2)
+        let radius = max(0, min(7, min(rect.width, rect.height) / 2))
         outline.path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
         CATransaction.commit()
     }
@@ -152,7 +146,7 @@ private final class HUDDragView: NSView {
     override func mouseUp(with event: NSEvent) {
         holdTimer?.invalidate()
         holdTimer = nil
-        let moved = isDragging, clicked = downAt != nil && !isArmed
+        let moved = isDragging
         if isArmed { (window as? OverlayPanel)?.releaseKeyboard() }
         downAt = nil
         isDragging = false
@@ -162,6 +156,5 @@ private final class HUDDragView: NSView {
         cursor.set()
         if moved { onEnd?() }
         onRelease?()
-        if clicked { onClick?() }
     }
 }

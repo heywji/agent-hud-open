@@ -176,19 +176,6 @@ struct SliderRow: View {
     }
 }
 
-/// Filled blue action button ("开始使用").
-struct PrimaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.ui(13, .semibold))
-            .foregroundStyle(Color.white)
-            .padding(.vertical, 7)
-            .padding(.horizontal, 18)
-            .background(RoundedRectangle(cornerRadius: 7).fill(Color(hex: 0x0a84ff)))
-            .opacity(configuration.isPressed ? 0.8 : 1)
-    }
-}
-
 struct CardModifier: ViewModifier {
     let theme: Theme
     var padding = EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16)

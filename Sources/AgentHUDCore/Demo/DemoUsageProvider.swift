@@ -5,20 +5,17 @@ public struct DemoUsageProvider: UsageProvider {
     public init() {}
 
     public func fetchUsage(agents: [AgentDescriptor], historyHours: Int) async throws -> UsageReport {
-        let now = DemoClock.now
-        return Self.report(agents: agents, historyHours: historyHours, now: now)
+        Self.report(agents: agents, historyHours: historyHours, now: Date())
     }
 
     /// The sample as a report of `agents`: readings for the windows among them, and the sample's sessions, models and
     /// tokens whichever rows are shown.
-    /// - stage: what a playing script has set; the fixed demo without one.
-    public static func report(agents: [AgentDescriptor], historyHours: Int, now: Date,
-                              stage: DemoStage? = DemoStageBox.current) -> UsageReport {
+    public static func report(agents: [AgentDescriptor], historyHours: Int, now: Date) -> UsageReport {
         let consumers = DemoData.consumers
         func models(of vendor: String) -> Set<String> { Set(consumers.filter { $0.vendor == vendor }.map(\.id)) }
         var insights: [String: UsageInsights] = [:], consumerIdsByQuota: [String: Set<String>] = [:]
         for row in agents {
-            guard let made = DemoData.insights(for: row, now: now, stage: stage) else { continue }
+            guard let made = DemoData.insights(for: row, now: now) else { continue }
             insights[row.id] = made
             // Every Claude model spends from the session and the week, Fable from its own week too; every Codex model
             // from the plan's window, and none of the sample's from Spark's.
@@ -39,8 +36,8 @@ public struct DemoUsageProvider: UsageProvider {
         periods.add(usage, endingAt: now)
         return UsageReport(
             generatedAt: now,
-            snapshots: DemoData.snapshots(for: agents, now: now, stage: stage),
-            sessions: DemoData.sessions(now: now, stage: stage),
+            snapshots: DemoData.snapshots(for: agents, now: now),
+            sessions: DemoData.sessions(now: now),
             // The demo reports the rows it was given, as a provider reports the rows it read: the sample's own as it names
             // them now, so a window a provider words in the interface's language follows that language.
             discoveredAgents: agents.map { row in named.first { $0.id == row.id } ?? row },
@@ -51,7 +48,6 @@ public struct DemoUsageProvider: UsageProvider {
             consumerIdsByQuota: consumerIdsByQuota,
             billing: agents.contains { $0.vendor == "DeepSeek" } ? [DemoData.deepSeekBilling(now: now)] : [],
             codexResetCredits: DemoData.codexResetCredits(now: now),
-            completions: stage?.completions ?? [],
             accounts: accounts.isEmpty ? nil : accounts,
             sessionUsage: DemoData.sessionUsage(now: now),
             periods: periods

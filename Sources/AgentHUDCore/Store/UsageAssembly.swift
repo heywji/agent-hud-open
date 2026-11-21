@@ -15,17 +15,14 @@ public enum UsageAssembly {
     }
 
     /// The store: with `ledger`, over the installed clients (`CombinedUsageProvider.standard`) behind the restart copy in
-    /// the data directory, which it shows at once, and reading a turn's calls from `ledger`; without one, over the sample
-    /// data (`DemoUsageProvider`) and its turns' calls, on the demo's clock, with no restart copy. `hooks` are the host's collection hooks.
+    /// the data directory, which it shows at once; without one, over the sample data (`DemoUsageProvider`) with no
+    /// restart copy, as the tests use it. `hooks` are the host's collection hooks.
     public static func store(settings: SettingsStore, ledger: UsageLedger?,
                              hooks: UsageCollectionHooks = UsageCollectionHooks()) -> UsageStore {
         let provider: any UsageProvider = ledger.map { CombinedUsageProvider.standard(settings: settings, ledger: $0) } ?? DemoUsageProvider()
         let retained = RetainedUsageProvider(provider: provider,
                                              cacheURL: ledger == nil ? nil : AppSupport.directory.appendingPathComponent("last-usage-report.json"))
-        let store = ledger == nil ? UsageStore(provider: retained, settings: settings, hooks: hooks, clock: { DemoClock.now })
-            : UsageStore(provider: retained, settings: settings, hooks: hooks)
-        store.ledger = ledger
-        if ledger == nil { store.sampleTurnCalls = { DemoData.turnCalls(session: $0.id, turn: $1) } }
+        let store = UsageStore(provider: retained, settings: settings, hooks: hooks)
         if let report = retained.initialReport { store.replace(report: report) }
         return store
     }

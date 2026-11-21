@@ -149,40 +149,6 @@ final class PiSessionObserverTests: XCTestCase, @unchecked Sendable {
         XCTAssertThrowsError(try PiSessionObserver.read(Data("{}".utf8)))
     }
 
-    func testLatestObserverOwnsNavigationAndCanClearAnOlderTerminal() async throws {
-        let home = try temporaryHome(), paths = OpenAgentPaths(home: home, environment: [:])
-        var captured = observation(.completed, age: 60, turnID: "captured")
-        captured.navigationTarget = .iTermSession(id: "w0t0p0:exact-terminal")
-        try write(JSONEncoder().encode(captured), to: paths.piTurns.appendingPathComponent("captured.json"))
-        let transcript = paths.pi.appendingPathComponent("sessions/workspace/session.jsonl")
-        try write(Data("""
-        {"type":"session","id":"session","cwd":"/workspace","timestamp":"\(now.ISO8601Format())"}
-        """.utf8), to: transcript)
-        let store = OpenAgentLocalStore(paths: paths)
-        let capturedReport = try await report(await store.index(since: now.addingTimeInterval(-86400)))
-        XCTAssertEqual(capturedReport.sessions.first?.navigationTarget, captured.navigationTarget,
-                       "the usage log cannot overwrite a destination its source observer captured")
-        XCTAssertEqual(capturedReport.completions.first?.navigationTarget, captured.navigationTarget)
-
-        var relocated = observation(.completed, age: 30, turnID: "relocated")
-        relocated.navigationTarget = .iTermSession(id: "w1t2p0:new-terminal")
-        try write(JSONEncoder().encode(relocated), to: paths.piTurns.appendingPathComponent("relocated.json"))
-        let moved = try await report(await store.index(since: now.addingTimeInterval(-86400)))
-        XCTAssertEqual(moved.completions.count, 2)
-        XCTAssertTrue(moved.completions.allSatisfy { $0.navigationTarget == relocated.navigationTarget },
-                      "past turns return to the session's current terminal after a resume elsewhere")
-
-        let unsupported = observation(.completed, turnID: "unsupported")
-        try write(JSONEncoder().encode(unsupported), to: paths.piTurns.appendingPathComponent("unsupported.json"))
-        let current = try await report(await store.index(since: now.addingTimeInterval(-86400)))
-        XCTAssertNil(current.sessions.first?.navigationTarget, "a newer source without an exact target clears the older destination")
-        XCTAssertEqual(current.completions.count, 3)
-        XCTAssertTrue(current.completions.allSatisfy { $0.navigationTarget == nil },
-                      "the latest unsupported source clears destinations for every past turn")
-        let oldRecord = try PiSessionObserver.read(JSONEncoder().encode(unsupported))
-        XCTAssertNil(oldRecord.navigationTarget, "observer records before navigation capture remain readable")
-    }
-
     func testNativeExtensionLifecycleRetriesHeartbeatAndPrivacy() async throws {
         let home = try temporaryHome()
         let script = home.appendingPathComponent("observer.mjs"), test = home.appendingPathComponent("test.mjs")

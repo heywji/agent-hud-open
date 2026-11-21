@@ -9,7 +9,7 @@ public enum StatusPalette {
     public static let warningLight = RGBA(hex: 0xffcc00)
     public static let warningTextLight = RGBA(hex: 0xc7a100)
     public static let criticalLight = RGBA(hex: 0xff3b30)
-    /// Paused / idle glow.
+    /// Idle: nothing to report.
     public static let idle = RGBA(hex: 0x9a9aa0)
 
     public static func color(for level: StatusLevel, light: Bool = false) -> RGBA {

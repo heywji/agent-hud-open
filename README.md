@@ -1,14 +1,7 @@
-<h1 align="center">Agent HUD</h1>
+<h1 align="center">Agent HUD Open — board only</h1>
 
 <p align="center">
-  <strong>Your agents, at a glance.</strong><br>
-  Usage, tokens and sessions for Claude Code, Codex and 15 more agents, at your Mac's notch or any screen edge.
-</p>
-
-<p align="center">
-  <a href="https://agenthud.app/mac"><img src="docs/buttons/mac.svg" alt="Download Agent HUD for Mac" width="180" height="36"></a>
-  <a href="https://apps.apple.com/app/id6812113619"><img src="docs/buttons/app-store.svg" alt="App Store: iPhone and Apple Watch" width="138" height="36"></a>
-  <a href="#build-from-source"><img src="docs/buttons/source.svg" alt="Build Agent HUD from source" width="181" height="36"></a>
+  Quota windows, API balances, the last 24 hours of tokens and the recent sessions of Claude Code, Codex and 15 more agents, in a panel that opens from your Mac's notch or from a row of agent logos on any screen edge.
 </p>
 
 <p align="center">
@@ -18,178 +11,121 @@
 </p>
 
 <p align="center">
-  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="https://agenthud.app">Website</a> · <a href="#supported-agents">Supported agents</a> · <a href="#documentation">Documentation</a>
+  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="#supported-agents">Supported agents</a> · <a href="#documentation">Documentation</a>
 </p>
 
-<p align="center">
-  <img src="docs/videos/agent-hud-loop.webp" alt="A tour of Agent HUD at a MacBook's notch. The glow breathes in red, yellow and green quota segments. A hover opens the panel on Claude's and Codex's quotas, a DeepSeek balance, the last 24 hours of tokens and the sessions, and a click turns Claude's quotas into burn rates. Claude then asks to run the test suite and is answered with Allow once, and its reply arrives as a New reply reminder whose card offers Return to session" width="800">
-</p>
+This is a board-only build of [Agent HUD Open](https://github.com/jazzenchen/agent-hud-open), the Swift macOS app, forked from upstream v0.5.3. Upstream has since moved to a separate Rust/Tauri rewrite. This branch keeps the Swift code and only its core, the board; everything else was removed. The app is still called Agent HUD Open, and its bundle still says 0.5.3.
 
-Agent HUD keeps your coding agents in view while you work in another app.
+## The board
 
-- **How much quota is left?** The glow turns green, yellow or red as a quota fills. Hover for the numbers.
-- **Which agent is waiting for you?** Approvals, questions and replies in one place, and a click takes you back.
-- **Where did the tokens go?** Statistics by time, agent, model, session and turn, with the cost at API prices.
-- **Away from your Mac?** The same numbers on your iPhone and Apple Watch.
+Hover the notch or the logos and the panel opens. From the top:
 
-## At a glance, or a hover
+- **Refresh error**: what went wrong, when the last refresh failed.
+- **Quotas**: each vendor's windows, grouped by account, with what is left of each and when it resets. A row is green under 70% used, yellow from 70% and red from 90%. A picker switches a vendor's block between the share left (%), the burn rate and tokens per hour (#); hovering a row shows its outlook, such as when it runs out at its pace. Codex accounts list their available usage resets, and Grok its prepaid and on-demand amounts.
+- **Balances**: for an API billed by use, such as DeepSeek's, the account balance and the estimated cost of the last 24 hours.
+- **Tokens**: the last 24 hours in 96 quarter-hour bars, every model stacked in its own colour and every token kind counted. Hovering a bar shows its period and each model's tokens.
+- **Sessions**: up to five, those with work in flight first, sessions waiting for you ahead of those still running, then those active in the last day; "+N more" counts the rest. A row shows the agent's logo with the session's state on its corner, its title and its tokens. Rows are not clickable.
 
-<p align="center">
-  <img src="docs/videos/simple-mode-tour.webp" alt="A tour of Simple mode on the left edge of a display. Five agent logos sit in quota rings, then show percentages and a balance. Hovering a logo writes that agent's quotas on one line, and a click opens Claude's card with its limits, burn rates and the 24-hour token bars. A permission request is answered with Allow once, a New reply reminder opens with Return to session, and the HUD is dragged to the top edge and back" width="800"><br>
-  <sub><a href="#bots-modes-and-settings">Simple mode</a> on a display's left edge, with Separate agents on · Sample data</sub>
-</p>
+The footer has Settings (gear) on the left and Quit (power) on the right. Opening the panel reads every account's quota again, at most once a minute per agent. Settings → Display → Expanded panel switches the quotas and balances, the reset countdowns, the token chart and the session list.
 
-**A glance.** The glow shows one colour per quota, such as a 5-hour or weekly limit: green under 70% used, yellow from 70%, red from 90%. In Simple mode the ring around each logo does the same. The glow moves faster while an agent is working.
+## Modes and settings
 
-**A hover.** The panel opens with the numbers:
-
-- **Quotas**: each one's share used and reset countdown, or its burn rate.
-- **Balances**: account and prepaid balances, where an agent has them.
-- **Tokens**: the last 24 hours in 15-minute bars.
-- **Sessions**: up to five, those waiting for you first.
-
-**A warning before a quota runs out.** It comes at 90% used, or sooner if the quota will not last until its reset.
-
-## At the notch, and on every display
-
-- **A MacBook with a notch**: Agent HUD lives at the notch.
-- **A display without one**: it gets a HUD of its own, a row of agent logos you can drag to any screen edge.
-- **Every display** keeps its own [mode](#bots-modes-and-settings), position, size and glow.
-- **Requests and reminders** show on one display only: the one your pointer is on.
-
-## Approvals, questions and replies in one place
-
-When an agent needs you, its request waits on the HUD with the command, file, edit diff or tool input it is asking about. Answer there, without switching windows.
-
-<p align="center">
-  <img src="docs/screenshots/approvals.webp" alt="Four permission requests waiting at the notch. The first is open: an edit diff for Avatar.tsx, the line Always allow adds Edit(src/**), and the buttons Deny, Always allow and Allow once" width="720">
-</p>
-
-- **Approvals**: **Deny**, **Allow once**, or **Always allow** where the agent offers a rule.
-- **Questions**: pick an option, or type your own.
-- **Replies**: a **New reply** reminder when a turn finishes.
-- **One click back**: a session's title, or **Return to session**, takes you to its thread, tab or iTerm2 pane.
-
-**Agent HUD never answers for you**: a request you leave alone goes back to the agent's own prompt after 10 minutes. [Which agent supports what](#supported-agents).
-
-## Where the tokens go
-
-The statistics window keeps 30 days of token history on your Mac.
-
-<p align="center">
-  <a href="docs/screenshots/usage-statistics.webp"><img src="docs/screenshots/usage-statistics.webp" alt="The Tokens page of the statistics window: a stacked token chart with its total and cost at API prices, one card per agent with tokens by kind and cost, Recent usage with cost and cache hits for today, 7 days and 30 days, and an activity heatmap" width="468"></a> <a href="docs/screenshots/mac-session.webp"><img src="docs/screenshots/mac-session.webp" alt="A Claude Code session's page: 52M tokens with 6.0M from sub-agents, cost ≈$24.72 at API prices, 26 turns and 217 calls, context 66%, cache hits 99%, a tokens-per-turn chart with sub-agent parts faded, and turn 22 opened call by call" width="330"></a><br>
-  <sub>The Tokens page and a session's page of the statistics window · Sample data</sub>
-</p>
-
-- **By time**: the last 5 hours, 24 hours, 7 days or 30 days, in bars as fine as 15 minutes.
-- **By agent and model**: one card per agent, and a chart you can narrow to any models and token kinds.
-- **By session, turn and call**: tokens per turn, how full the context window got, and every model call in a turn.
-- **Sub-agents and cache**: sub-agent tokens inside their parent session; cache hit rates per period, session and model.
-- **What it is worth**: priced at the vendor's API prices where a model has one, and marked ≈. On a subscription it is an estimate, not a charge.
-
-## On your iPhone
-
-Agent HUD for iPhone and Apple Watch shows what your Mac collects: quotas, balances, token statistics and sessions, in the app, in widgets and on the Watch. The app is free.
-
-<p align="center">
-  <a href="docs/screenshots/iphone-home.webp"><img src="docs/screenshots/iphone-home.webp" alt="Agent HUD on iPhone, Home tab: quota cards for Claude and Codex with the share used and reset time of each window, and a DeepSeek account balance" width="220"></a> <a href="docs/screenshots/iphone-sessions.webp"><img src="docs/screenshots/iphone-sessions.webp" alt="Agent HUD on iPhone, Sessions tab: today's tokens by kind with their cost, then sessions with per-turn bars and context-window fill" width="220"></a><br>
-  <sub>Agent HUD for iPhone · Home and Sessions · Sample data</sub>
-</p>
-
-**On the same network, viewing is free.** In the [official Mac app](https://agenthud.app/mac), turn on Settings → Local network → **Share this Mac**. An iPhone on the same Apple Account connects by itself; any other iPhone pairs by scanning a QR code. The Mac serves the phone directly, with no Agent HUD server.
-
-## Agent HUD Remote
-
-**The one paid feature**, for when you are away from your Mac. It syncs through your own iCloud and adds:
-
-- **Any network**: your Macs on iPhone, in widgets and on Apple Watch.
-- **Conversations**: the prompts and replies of Claude Code, Codex, Grok CLI, Grok Bot and Antigravity sessions, to read on the phone.
-- **Remote Sessions** (experimental; turn it on in the Mac's Settings → Experimental): allow or deny a tool call, and message Claude Code and Codex sessions, from the phone. See the [guide](https://agenthud.app/guides/remote-sessions).
-- **Alerts and Live Activities**: alerts on iPhone and Apple Watch, and your running sessions on the Lock Screen and in the Dynamic Island.
-
-The last three need Agent HUD Remote on the same network too. It is a subscription for 1, 2 or 3 Macs, monthly or yearly, with the first week free; iPhone and Apple Watch never count. Subscribe in the iPhone app, where the price is shown, then turn on Settings → Subscription → **Enable this Mac** on the Mac.
-
-## Bots, modes and settings
-
-**Bots.** Every agent's logo has a small bot in the logo's own shape and colours, with eyes that follow your pointer. It hops when the agent needs your approval and smiles when a turn is done. [See every agent's bot](docs/videos/agent-bots.gif).
-
-**Modes.** Each display runs one of three: Notch by default where there is a notch, Dynamic elsewhere.
+Each display runs one of three modes, chosen in Settings → Display → Screens:
 
 | Mode | On screen |
 | --- | --- |
-| **Notch** | At the notch, with the glow around it. |
-| **Simple** | A small floating panel on any screen edge: each agent's logo in a ring of its most used quota, with the percentage beside it. |
-| **Dynamic** | A row of agent logos on any screen edge, with the glow behind them. A logo becomes its bot while its agent works. |
+| **Notch** | The default on a display with a notch: the HUD sits at the notch. On a display without one, a black bar stands in for it at the top centre. |
+| **Dynamic** | The default elsewhere: the agents' logos in a row on any screen edge, bare, with no backdrop. Drag the row to another edge or position; dragging the notch switches it to Dynamic. |
+| **Off** | No HUD on that display. With every display off, the main display keeps its HUD, since its panel is the way into Settings. |
 
-**Settings.** Choose the accounts and quotas to show, each display's mode, size and glow, and what the panel contains. The app runs in English or Simplified Chinese. **⌘⌥H** hides or shows the glow.
+The row shows the agents you watch, then any other agent run in the last day; agents that share artwork share a logo. The open panel and the notch cast a soft shadow; a collapsed row of logos casts none.
+
+Settings, from the gear in the panel's footer:
+
+- **General**: appearance, language (English or Simplified Chinese), launch at login, and client hooks.
+- **Agents**: for each agent, the accounts and windows to show and their order, Live status, and for GitHub Copilot the consent to read its quota; Pi and OpenCode say whether their observer is in place.
+- **Display**: for each display, the mode, Reset Position, logo size, distance from the edge, spacing and Show logos (off, the row keeps its place and hovering there still opens the panel); what the panel shows; and hover behavior: Press Option to open, Open immediately at the top edge, and the hover and collapse delays.
+
+## What was removed
+
+Compared with upstream v0.5.3, code and interface alike:
+
+- The glow, with every style and effect, its settings and ⌘⌥H; the bots.
+- Simple mode, and Separate agents with its per-agent cards.
+- Island alerts and reminders: quota warnings, added usage resets, New reply.
+- Answering permission requests and questions on the HUD, for every client, Codex Desktop, Antigravity and DeepSeek Harness.
+- Returning to a session from the HUD.
+- The statistics window, the menu bar item and its menu, the onboarding window.
+- Demo mode, demo scripts, `--snapshot` and `--record`.
+- The host extension points: extra settings pages, menu items, HUD controls and the island-event relay.
+- The beta update feed.
+
+## Client hooks
+
+With **Client hooks** on in Settings → General, the default, every start points these handlers at the running copy and adds those missing for the agents installed:
+
+- **Claude Code's notification hook**: a Claude Code session shows as waiting for approval while Claude Code asks for permission or for input.
+- **GitHub Copilot CLI's stop hook**: a Copilot turn still running ends at once.
+- **Pi's extension and OpenCode's plugin**: Pi's running and finished turns, without which Pi sessions never show as running, and OpenCode's finished turns.
+
+The stop hooks fuller builds added to Antigravity, Cursor, CodeBuddy and Qwen Code only fed turn reminders, since those clients' sessions never show as running; every start takes them out. Switching Client hooks off removes every Agent HUD handler, whichever copy added it, and adds none back; usage, quota and sessions are unaffected.
+
+**Retired handlers.** Fuller builds also installed `--permission-hook <client>`, to answer permission requests on the HUD, and `--session-origin-hook <claude|codex>`, to find a session's terminal. A client that still calls one gets an answer at once, and the app does not start: nothing for a permission request, so the client shows its own prompt, and `{}` for a session-origin hook. Every start, and every switch of Client hooks, takes those handlers out of Claude Code's `settings.json`, Codex's `hooks.json` and the settings of Qoder, Qoder CN, QoderWork, CodeBuddy, WorkBuddy, ZCode and Qwen Code, when they run this copy's own executable. Handlers of other programs are left alone. Details: [retired handlers](docs/session-lifecycle.md#retired-handlers).
 
 ## Supported agents
 
-Install and sign in to the agents you want to monitor; Agent HUD finds them by itself. All 17 report tokens and sessions.
+Install and sign in to the agents you want to monitor; the app finds them by itself. All 17 report tokens and sessions.
 
-| Agent | Quota | Live status | Approvals | Questions | Replies | One click back | Turns and calls |
-| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Claude&nbsp;Code** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Codex** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **DeepSeek&nbsp;Harness** | Balance | ✓ |  | ✓ | ✓ |  | ✓ |
-| **Antigravity** | ✓ |  | ✓ |  | ✓ | ✓ |  |
-| **Cursor** | ✓ |  |  |  | ✓ |  |  |
-| **Grok&nbsp;CLI** | ✓ | ✓ |  |  | ✓ | ✓ |  |
-| **Grok&nbsp;Bot** | ✓ |  |  |  |  | ✓ |  |
-| **GitHub&nbsp;Copilot&nbsp;CLI** | ✓ | ✓ |  |  | ✓ |  |  |
-| **OpenCode** | ✓ |  |  |  | ✓ | ✓ |  |
-| **Kimi** | ✓ | ✓ |  |  | ✓ |  |  |
-| **Pi** | ✓ | ✓ |  |  | ✓ | ✓ |  |
-| **OpenClaw** |  | ✓ |  |  | ✓ |  |  |
-| **Hermes&nbsp;Agent** |  |  |  |  |  |  |  |
-| **ZCode** |  |  | ✓ | ✓ |  |  |  |
-| **CodeBuddy** |  |  | ✓ |  | ✓ |  |  |
-| **WorkBuddy** |  |  | ✓ |  |  |  |  |
-| **Qwen&nbsp;Code** |  |  | ✓ |  | ✓ |  |  |
+| Agent | Quota | Live status | Client hook |
+| --- | :---: | :---: | --- |
+| **Claude&nbsp;Code** | ✓ | ✓ | Notification hook |
+| **Codex** | ✓ | ✓ | |
+| **DeepSeek&nbsp;Harness** | Balance | ✓ | |
+| **Antigravity** | ✓ | | |
+| **Cursor** | ✓ | | |
+| **Grok&nbsp;CLI** | ✓ | ✓ | |
+| **Grok&nbsp;Bot** | ✓ | | |
+| **GitHub&nbsp;Copilot&nbsp;CLI** | ✓ | ✓ | Stop hook |
+| **OpenCode** | ✓ | | Plugin |
+| **Kimi** | ✓ | ✓ | |
+| **Pi** | ✓ | ✓ | Extension |
+| **OpenClaw** | | ✓ | |
+| **Hermes&nbsp;Agent** | | | |
+| **ZCode** | | | |
+| **CodeBuddy** | | | |
+| **WorkBuddy** | | | |
+| **Qwen&nbsp;Code** | | | |
 
-Also: the **GLM Coding Plan** quota, and approvals for the **Qoder** builds. Codex approvals need its hook trusted in Codex, and Copilot's quota your consent in Settings. The rest is in [each agent's details](docs/providers.md).
+Live status means the panel shows which sessions are running; only Claude Code's also show waiting for approval, and Pi's need its extension. Also read: the **GLM Coding Plan** quota. Copilot's quota needs your consent in Settings → Agents. The rest is in [each agent's details](docs/providers.md).
 
 ## Your data
 
 - **Read on your Mac**: the records your agents already keep. Usage history stays in a local database.
-- **Read from each vendor**: quotas, balances and Cursor's usage, with the agent's existing sign-in or configured key. No read sends a message to a model, and credentials are never stored.
-- **Written on your Mac**: hooks in your agents' own settings, to receive requests and replies. **Client hooks** in Settings → General removes them all.
-- **Uploaded**: nothing, by a build from this source. What the official app shares with your iPhone, through your iCloud and for Live Activities is in its [privacy policy](https://agenthud.app/privacy).
+- **Read from each vendor**: quotas, balances and account usage, with the agent's existing sign-in or configured key. No read sends a message to a model, and credentials are never stored.
+- **Written on your Mac**: the client hooks above, in your agents' own settings and directories, and the records they leave for the app; at every start, this copy's retired handlers are taken out of those settings. **Client hooks** in Settings → General removes the hooks.
+- **Uploaded**: nothing.
 
-See also [data access](docs/data-access.md).
+The app keeps its data in `~/Library/Application Support/Agent HUD Open Desktop` when built with `make build`, whose `Info.plist` names that directory, and in `Agent HUD Open` where none is named. See also [data access](docs/data-access.md).
 
 ## Build from source
 
-**Requirements:** macOS 14+ and Xcode or the Xcode Command Line Tools with a Swift 6 toolchain.
-
-```sh
-git clone https://github.com/jazzenchen/agent-hud-open.git
-cd agent-hud-open
-make check
-make test
-make run
-```
-
-This builds and opens `build/Agent HUD Open.app`, signed ad-hoc for local use. No developer account, signing identity or provisioning profile is required. To try the app without any agents, quit it and run `make demo`, which opens it on sample data.
-
-<details>
-<summary><strong>Development and embedding</strong></summary>
+**Requirements:** macOS 14+ and Xcode or the Xcode Command Line Tools with a Swift 6 toolchain. No developer account, signing identity or provisioning profile is required.
 
 | Command | Purpose |
 | --- | --- |
-| `make check` / `make test` | Check source boundaries / run unit tests |
-| `make build` / `make run` | Build the locally signed app / build and open it |
-| `make demo` / `make snapshot` | Open sample data / render the UI to `build/snapshots` |
+| `make build` | Build `build/Agent HUD Open.app`, signed ad-hoc for local use |
+| `make run` | Build the app and open it |
+| `make test` | Run the unit tests (`swift test`) |
+| `make check` | Check source boundaries |
+| `make clean` | Remove `.build` and `build` |
 
-The Swift package exposes `AgentHUDSupport` (records and identities), `AgentHUDCore` (providers, models and storage), and `AgentHUDDesktop` (native HUD and statistics). `AgentHUDOpen` is the standalone executable. Hosts can provide settings pages and services through `DesktopApplication`; see [host integration](docs/architecture.md#host-integration).
+`swift test` runs the tests without `make`. Launch switches such as `--open-panel`, `--show-settings` and `--probe` are listed under [command line](docs/command-line.md).
 
-CI checks source boundaries, runs unit tests, builds the app and verifies its signature and resources.
-
-</details>
+The Swift package exposes `AgentHUDSupport` (records and identities), `AgentHUDCore` (providers, models, storage and client hooks) and `AgentHUDDesktop` (the HUD and the Settings window); `AgentHUDOpen` is the standalone executable. A host can embed the libraries with a provider of its own; see [host integration](docs/architecture.md#host-integration). CI checks source boundaries, runs the unit tests, builds the app and verifies its signature and resources.
 
 ## Documentation
 
-[HUD and approvals](docs/hud.md) · [Providers](docs/providers.md) · [Usage semantics](docs/usage-semantics.md) · [Session lifecycle](docs/session-lifecycle.md) · [Session navigation](docs/session-navigation.md) · [Data access](docs/data-access.md) · [Architecture](docs/architecture.md) · [Performance](docs/performance.md) · [Command line](docs/command-line.md) · [Updates](docs/updates.md) · [Brand assets](docs/brand-assets.md) · [Changelog](CHANGELOG.md)
+[The HUD](docs/hud.md) · [Providers](docs/providers.md) · [Usage semantics](docs/usage-semantics.md) · [Session lifecycle](docs/session-lifecycle.md) · [Data access](docs/data-access.md) · [Architecture](docs/architecture.md) · [Performance](docs/performance.md) · [Command line](docs/command-line.md) · [Brand assets](docs/brand-assets.md) · [Changelog](CHANGELOG.md)
 
 ## License
 

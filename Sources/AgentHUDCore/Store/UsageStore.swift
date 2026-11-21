@@ -9,7 +9,7 @@ public final class UsageChangeObservation {
     deinit { cancellation?() }
 }
 
-/// Observable app state: the collected report, derived rows, glow appearance and stats selections.
+/// Observable app state: the collected report and what the panel derives from it.
 @MainActor
 @Observable
 public final class UsageStore {
@@ -17,37 +17,12 @@ public final class UsageStore {
     public internal(set) var lastError: String?
     public internal(set) var pausedUntil: Date?
     public internal(set) var isRefreshing = false
-    public internal(set) var statsRange: StatsRange = .hours24
-    public var tokenBucketSize: TokenBucketSize = .hour1
-    public var tokenDimensions: TokenDimensions = .all
-    /// Explicitly picked token cards; nil shows recorded clients and clients connected to monitored services.
-    public var pickedAgents: Set<String>?
-    /// Keep every selectable range ready, including the partial hour at the start of the rolling window.
+    /// The history every pass reads: a week and the partial hour at its start, which the quota insights' week of
+    /// readings needs; the panel itself shows the last day.
     public static var historyHours: Int { StatsRange.days7.hours + 1 }
-    /// The statistics window's page. Pointing out a quota window turns to Tokens, focusing a session to Sessions.
-    public var statsTab: StatsTab = .tokens
-    /// The quota window the statistics window points out, set by whatever opened it.
-    public var selectedQuotaId: String? { didSet { if selectedQuotaId != nil { statsTab = .tokens } } }
-    /// The session the Sessions page shows in place of its list; nil shows the list.
-    public var focusedSessionID: String? {
-        didSet {
-            if focusedSessionID != nil { statsTab = .sessions }
-            if focusedSessionID != oldValue { focusedTurn = nil }
-        }
-    }
-    /// The focused session's turn whose calls its page lays out, by its place in the session's breakdown.
-    public var focusedTurn: Int? { didSet { if focusedTurn != oldValue { focusedTurnCalls = nil } } }
-    /// The focused turn's calls once read, with the tools their logs name.
-    public internal(set) var focusedTurnCalls: [TurnCall]?
-    /// Where turns' calls are read from: the ledger a host's providers write.
-    @ObservationIgnored public var ledger: UsageLedger?
-    /// The calls a turn shows where there is no ledger to read them from, such as the demo's
-    /// (`DemoData.turnCalls(session:turn:)`); without either, a turn shows none.
-    @ObservationIgnored public var sampleTurnCalls: (@MainActor (LiveSession, SessionUsage.Turn) -> [TurnCall])?
-    public var glowHidden = false
     /// Advances every few seconds so countdowns re-render.
     public internal(set) var now: Date
-    /// The time the store runs on: the wall clock, or the demo's own (`DemoClock`).
+    /// The time the store runs on: the wall clock, or a test's own.
     @ObservationIgnored public let clock: @Sendable () -> Date
     /// The turns clients' prompt and Stop hooks saw, by session id, which a host that receives those hooks hands in. A hook
     /// turn takes the place of what a session's log says wherever the hooks saw more
@@ -63,7 +38,7 @@ public final class UsageStore {
     /// Counts the reports shown, so that a new one is told from the last without comparing them.
     @ObservationIgnored private var reportGeneration = 0
     /// The last view built, and what it was built from.
-    @ObservationIgnored private var built: (generation: Int, agents: [AgentDescriptor], settings: Settings, approvals: [String],
+    @ObservationIgnored private var built: (generation: Int, agents: [AgentDescriptor], settings: Settings,
                                             hookTurns: [String: SessionPhase.HookTurn], failure: String?, view: ReportView)?
 
     /// `hooks` let a host choose the history window, publish each provider report and merge it into the displayed report.
@@ -164,21 +139,20 @@ public final class UsageStore {
 
     // MARK: Derived
 
-    /// What the Mac shows of the report now: its rows, balances, levels and sessions, with the sessions whose clients wait
-    /// for an answer to a permission request (`PermissionRequests.shared`) waiting for approval and the hooks' turns in
-    /// their place, and every reading failed while the last pass failed to read any source. It is built again only when
-    /// the report, the agent list, the settings, the waiting requests, the hooks' turns, a failed pass or the time changed,
-    /// and reading it tracks all seven.
+    /// What the Mac shows of the report now: its rows, balances, levels and sessions, with the hooks' turns in their
+    /// place, and every reading failed while the last pass failed to read any source. It is built again only when the
+    /// report, the agent list, the settings, the hooks' turns, a failed pass or the time changed, and reading it tracks
+    /// all six.
     public var view: ReportView {
         let report = self.report, agents = settings.agents, preferences = settings.settings, now = self.now, failure = lastError
-        let approvals = PermissionRequests.shared.pending, requests = approvals.map(\.id), hookTurns = self.hookTurns
+        let hookTurns = self.hookTurns
         if let built, built.generation == reportGeneration, built.view.now == now, built.agents == agents,
-           built.settings == preferences, built.approvals == requests, built.hookTurns == hookTurns, built.failure == failure {
+           built.settings == preferences, built.hookTurns == hookTurns, built.failure == failure {
             return built.view
         }
-        let view = ReportView(report: report, agents: agents, settings: preferences, approvals: approvals, hookTurns: hookTurns, now: now,
+        let view = ReportView(report: report, agents: agents, settings: preferences, hookTurns: hookTurns, now: now,
                               failure: failure)
-        built = (reportGeneration, agents, preferences, requests, hookTurns, failure, view)
+        built = (reportGeneration, agents, preferences, hookTurns, failure, view)
         return view
     }
 
@@ -210,9 +184,6 @@ public final class UsageStore {
 
     /// `view.levels`.
     public var levels: [StatusLevel] { view.levels }
-
-    /// `view.alertPulseVendors`.
-    public var alertPulseVendors: [String] { view.alertPulseVendors }
 
     public var isIndexing: Bool { report?.indexing != nil }
 

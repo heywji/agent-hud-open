@@ -1,13 +1,12 @@
 import Foundation
 import Observation
 
-/// Persists `Settings`, the ordered agent list and onboarding state in UserDefaults as JSON.
+/// Persists `Settings` and the ordered agent list in UserDefaults as JSON.
 @MainActor
 @Observable
 public final class SettingsStore {
     public private(set) var settings: Settings
     public private(set) var agents: [AgentDescriptor]
-    public private(set) var hasCompletedOnboarding: Bool
 
     public enum Change { case settings, agents, discovery }
     /// Invoked after preferences are persisted and local state is updated. A running `UsageStore` sets it, to wake
@@ -21,10 +20,9 @@ public final class SettingsStore {
     public enum Keys {
         public static let settings = "settings.v1"
         public static let agents = "agents.v5"
-        public static let onboarding = "onboarding.completed.v1"
     }
 
-    /// Rows come from providers; `defaultAgents` seeds a store for the demo and tests.
+    /// Rows come from providers; `defaultAgents` seeds a store for the tests.
     public init(defaults: UserDefaults = .standard, defaultAgents: [AgentDescriptor] = []) {
         self.defaults = defaults
         let decoder = JSONDecoder()
@@ -39,7 +37,6 @@ public final class SettingsStore {
         } else {
             agents = defaultAgents.groupedAgentOrder
         }
-        hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarding)
         let normalized = applyingAccountVisibility(to: agents)
         if normalized != agents {
             agents = normalized
@@ -219,11 +216,6 @@ public final class SettingsStore {
     /// Hidden accounts keep every window off; visible accounts retain their individual display switches.
     private func applyingAccountVisibility(to windows: [AgentDescriptor]) -> [AgentDescriptor] {
         windows.map { settings.accountVisible($0.displayAccountID) ? $0 : $0.with(enabled: false) }
-    }
-
-    public func markOnboardingComplete() {
-        hasCompletedOnboarding = true
-        defaults.set(true, forKey: Keys.onboarding)
     }
 
     private func persist<T: Encodable>(_ value: T, key: String) {

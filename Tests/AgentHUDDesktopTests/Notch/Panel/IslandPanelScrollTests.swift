@@ -25,18 +25,14 @@ final class IslandPanelScrollTests: XCTestCase {
         let hosting = try XCTUnwrap(fixture.controller.panel.contentView)
         fixture.controller.show()
         let label = edge.map { "\($0) dock" } ?? "notch"
-        try await waitUntil("\(label) lays out its complete root, quota rows, token models and inline completion",
-                            hosting: hosting) {
-            guard let scroll = self.firstScrollView(in: hosting), let document = scroll.documentView,
-                  let marker = self.footerMarker(in: hosting) else { return false }
+        try await waitUntil("\(label) lays out its complete root and quota rows", hosting: hosting) {
+            guard let scroll = self.firstScrollView(in: hosting), let document = scroll.documentView else { return false }
             return fixture.observation.height > fixture.cardFrame.height + 200
-                && document.bounds.height > 0 && scroll.contentView.bounds.height > 0 && marker.bounds.height > 0
+                && document.bounds.height > 0 && scroll.contentView.bounds.height > 0
         }
         let scroll = try XCTUnwrap(firstScrollView(in: hosting))
         let document = try XCTUnwrap(scroll.documentView)
-        let marker = try XCTUnwrap(footerMarker(in: hosting))
         let viewportBefore = topLeftRect(scroll.contentView.convert(scroll.contentView.bounds, to: hosting), in: hosting)
-        let footerBefore = topLeftRect(marker.convert(marker.bounds, to: hosting), in: hosting)
         let card = fixture.cardFrame
 
         XCTAssertGreaterThan(fixture.canvas.height, card.height + 200)
@@ -45,18 +41,11 @@ final class IslandPanelScrollTests: XCTestCase {
         XCTAssertGreaterThan(viewportBefore.height, 80, "\(label): the viewport must retain usable space")
         XCTAssertTrue(card.insetBy(dx: -1, dy: -1).contains(viewportBefore),
                       "\(label): viewport \(viewportBefore) must stay inside short card \(card), not use the full canvas")
-        XCTAssertNil(marker.enclosingScrollView, "\(label): footer controls must be outside the scrolling content")
-        XCTAssertTrue(card.insetBy(dx: -1, dy: -1).contains(footerBefore),
-                      "\(label): footer \(footerBefore) must be inside the card \(card)")
-        XCTAssertGreaterThanOrEqual(footerBefore.minY, viewportBefore.maxY - 1,
-                                   "\(label): the scrolling viewport must end above the footer")
-        let visibleFooter = marker.visibleRect.intersection(marker.bounds)
-        XCTAssertEqual(visibleFooter.height, marker.bounds.height, accuracy: 1,
-                       "\(label): the footer must remain fully visible in the native hierarchy")
-        XCTAssertEqual(visibleFooter.width, marker.bounds.width, accuracy: 1)
-        XCTAssertTrue(hosting.bounds.contains(marker.convert(marker.bounds, to: hosting)),
-                      "\(label): the complete footer must remain inside the native animation canvas")
-        try assertFooterIsPainted(marker, in: hosting, label: label)
+        // The footer's buttons are 28 pt tall and sit below the scrolling content, inside the card.
+        let footer = CGRect(x: viewportBefore.minX, y: viewportBefore.maxY,
+                            width: viewportBefore.width, height: card.maxY - viewportBefore.maxY)
+        XCTAssertGreaterThanOrEqual(footer.height, 28, "\(label): the viewport must end above room for the footer")
+        try assertPainted(footer, in: hosting, label: label)
 
         let previousOffset = scroll.contentView.bounds.origin.y
         let bottom = document.isFlipped ? document.bounds.maxY - scroll.contentView.bounds.height : document.bounds.minY
@@ -67,35 +56,28 @@ final class IslandPanelScrollTests: XCTestCase {
         }
         XCTAssertNotEqual(scroll.contentView.bounds.origin.y, previousOffset,
                           "\(label): scrolling must move the actual NSScrollView document")
-        let footerAfter = topLeftRect(marker.convert(marker.bounds, to: hosting), in: hosting)
         let viewportAfter = topLeftRect(scroll.contentView.convert(scroll.contentView.bounds, to: hosting), in: hosting)
-        XCTAssertEqual(footerAfter.minX, footerBefore.minX, accuracy: 1)
-        XCTAssertEqual(footerAfter.minY, footerBefore.minY, accuracy: 1, "\(label): scrolling must not move the footer")
-        XCTAssertEqual(footerAfter.width, footerBefore.width, accuracy: 1)
-        XCTAssertEqual(footerAfter.height, footerBefore.height, accuracy: 1)
         XCTAssertEqual(viewportAfter.minY, viewportBefore.minY, accuracy: 1)
-        XCTAssertEqual(viewportAfter.height, viewportBefore.height, accuracy: 1)
-        try assertFooterIsPainted(marker, in: hosting, label: label)
+        XCTAssertEqual(viewportAfter.height, viewportBefore.height, accuracy: 1,
+                       "\(label): scrolling must not move the footer below the viewport")
+        try assertPainted(footer, in: hosting, label: label)
     }
 
+    /// The footer's controls are drawn in the panel's secondary colour over its black card: something in `rect` has to
+    /// be brighter than the card, or the card's mask has cut the footer off.
     @MainActor
-    private func assertFooterIsPainted(_ marker: IslandPanelFooterProbeView, in hosting: NSView, label: String) throws {
-        let footer = topLeftRect(marker.convert(marker.bounds, to: hosting), in: hosting)
+    private func assertPainted(_ rect: CGRect, in hosting: NSView, label: String) throws {
         let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-        let x = Int((footer.midX - hosting.bounds.minX) * CGFloat(bitmap.pixelsWide) / hosting.bounds.width)
-        let y = Int(footer.midY * CGFloat(bitmap.pixelsHigh) / hosting.bounds.height)
-        guard x >= 0, x < bitmap.pixelsWide, y >= 0, y < bitmap.pixelsHigh else {
-            XCTFail("\(label): the footer centre lies outside the rendered animation canvas")
-            return
+        let sx = CGFloat(bitmap.pixelsWide) / hosting.bounds.width, sy = CGFloat(bitmap.pixelsHigh) / hosting.bounds.height
+        var brightest: CGFloat = 0
+        for y in stride(from: Int(rect.minY * sy), to: Int(rect.maxY * sy), by: 1) where y >= 0 && y < bitmap.pixelsHigh {
+            for x in stride(from: Int(rect.minX * sx), to: Int(rect.maxX * sx), by: 1) where x >= 0 && x < bitmap.pixelsWide {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), color.alphaComponent > 0.5 else { continue }
+                brightest = max(brightest, (color.redComponent + color.greenComponent + color.blueComponent) / 3)
+            }
         }
-        let color = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
-        XCTAssertGreaterThan(color.redComponent, 0.8, "\(label): the card's mask must leave the footer visible")
-        XCTAssertGreaterThan(color.blueComponent, 0.8, "\(label): the footer probe must be painted")
-        XCTAssertGreaterThan(color.redComponent - color.greenComponent, 0.25,
-                             "\(label): the footer probe must remain visibly magenta after colour conversion")
-        XCTAssertGreaterThan(color.blueComponent - color.greenComponent, 0.25)
-        XCTAssertGreaterThan(color.alphaComponent, 0.8)
+        XCTAssertGreaterThan(brightest, 0.25, "\(label): the footer must be painted inside the card")
     }
 
     @MainActor
@@ -125,12 +107,6 @@ final class IslandPanelScrollTests: XCTestCase {
     private func firstScrollView(in view: NSView) -> NSScrollView? {
         if let scroll = view as? NSScrollView { return scroll }
         return view.subviews.lazy.compactMap { self.firstScrollView(in: $0) }.first
-    }
-
-    @MainActor
-    private func footerMarker(in view: NSView) -> IslandPanelFooterProbeView? {
-        if let marker = view as? IslandPanelFooterProbeView { return marker }
-        return view.subviews.lazy.compactMap { self.footerMarker(in: $0) }.first
     }
 }
 
@@ -187,14 +163,9 @@ private final class IslandPanelScrollFixture {
         case .right: strip = CGRect(x: width - 32, y: 0, width: 32, height: canvas.height)
         default: strip = CGRect(x: 100, y: 0, width: 280, height: 32)
         }
-        let completion = SessionCompletion(sessionID: "scroll-completion", vendor: "Claude", turnID: "finished-turn",
-            task: "A completed task keeps its inline reminder above the quota and token sections",
-            model: "Model 0", startedAt: now.addingTimeInterval(-180), completedAt: now)
         var root = IslandRootView(store: store, isOpen: true,
             collapsedSize: edge == nil ? CGSize(width: 216, height: 32) : strip.size,
-            collapsedTopRadius: 8, collapsedBottomRadius: 12, lightBorder: false, onOpenStats: {},
-            additionalHUDControls: { AnyView(IslandPanelFooterProbe().frame(width: 16, height: 28)) },
-            alert: .completion(completion))
+            collapsedTopRadius: 8, collapsedBottomRadius: 12, lightBorder: false)
         root.presentationSize = canvas
         root.presentationFrame = cardFrame
         root.animatesGeometry = false
@@ -204,8 +175,8 @@ private final class IslandPanelScrollFixture {
             root.edge = edge
             root.logoQueueFrame = strip
             root.logoQueue = LogoQueueConfig(items: (0..<20).map { _ in
-                LogoQueueItem(vendor: "Claude", isWorking: false)
-            }, placement: ScreenPlacement(mode: .logos, edge: edge, logoSize: 24), settings: settings.settings)
+                LogoQueueItem(vendor: "Claude")
+            }, placement: ScreenPlacement(mode: .logos, edge: edge, logoSize: 24))
         }
         controller = IslandWindowController(
             frame: CGRect(x: -20000, y: -20000, width: canvas.width, height: canvas.height), rootView: root)
@@ -223,15 +194,3 @@ private final class IslandPanelScrollObservation {
 }
 
 private struct IslandPanelScrollTimeout: Error {}
-
-private struct IslandPanelFooterProbe: NSViewRepresentable {
-    func makeNSView(context: Context) -> IslandPanelFooterProbeView { IslandPanelFooterProbeView() }
-    func updateNSView(_ view: IslandPanelFooterProbeView, context: Context) {}
-}
-
-private final class IslandPanelFooterProbeView: NSView {
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor(deviceRed: 1, green: 0, blue: 1, alpha: 1).setFill()
-        bounds.fill()
-    }
-}

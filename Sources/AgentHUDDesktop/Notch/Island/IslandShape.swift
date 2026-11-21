@@ -76,26 +76,3 @@ struct IslandShape: Shape, Animatable {
         return path
     }
 }
-
-/// Rectangle with square top corners and rounded bottom corners (used for the glow, whose top is off-screen).
-struct BottomRoundedRectangle: Shape, Animatable {
-    var radius: CGFloat
-
-    var animatableData: CGFloat {
-        get { radius }
-        set { radius = newValue }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let r = max(0, min(radius, min(rect.width, rect.height) / 2))
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
-        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.maxY), tangent2End: CGPoint(x: rect.maxX - r, y: rect.maxY), radius: r)
-        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
-        path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.maxY), tangent2End: CGPoint(x: rect.minX, y: rect.maxY - r), radius: r)
-        path.closeSubpath()
-        return path
-    }
-}

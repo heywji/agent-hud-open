@@ -21,8 +21,7 @@ public struct SessionPhase: Hashable, Sendable {
     public let state: State
     /// In flight: when the turn in flight started, else when the session did. Otherwise: the session's last event.
     public let since: Date
-    /// In flight: when the Mac stops vouching for the state without a newer reading or hook. Nil otherwise, and for a
-    /// client waiting for an answer to a permission request, which lasts as long as it waits.
+    /// In flight: when the Mac stops vouching for the state without a newer reading or hook. Nil otherwise.
     public let validUntil: Date?
 
     public init(state: State, since: Date, validUntil: Date?) {
@@ -217,13 +216,6 @@ public struct SessionPhase: Hashable, Sendable {
     static func inFlightSince(_ session: LiveSession, turn: SessionTurn?) -> Date {
         guard let turn, turn.state.isInFlight, let start = turn.startedAtMs else { return session.startedAt }
         return RecordCoding.date(start)
-    }
-
-    /// The phase of a session whose client waits for an answer to a permission request, given the phase it has otherwise:
-    /// waiting for approval for as long as the client waits, which no reading's age bounds, since the work in flight
-    /// started.
-    func awaitingApproval(_ session: LiveSession, turn: SessionTurn?) -> SessionPhase {
-        SessionPhase(state: .waitingForApproval, since: isInFlight ? since : Self.inFlightSince(session, turn: turn), validUntil: nil)
     }
 
     // MARK: Hooks

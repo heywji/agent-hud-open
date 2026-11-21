@@ -127,13 +127,6 @@ enum GrokBotCache {
         return envelope["value"]
     }
 
-    static func transcriptAgent(key: String, account: String) -> String? {
-        let prefix = accountPrefix + component(account) + ".transcript.replicas."
-        guard key.hasPrefix(prefix), let agent = String(key.dropFirst(prefix.count)).removingPercentEncoding,
-              isAgentID(agent), transcriptKey(account: account, agent: agent) == key else { return nil }
-        return agent
-    }
-
     private static func data(at url: URL) throws -> Data {
         guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= ProviderFiles.jsonLimit else { throw ProviderFailure.limit }
         return try Data(contentsOf: url)

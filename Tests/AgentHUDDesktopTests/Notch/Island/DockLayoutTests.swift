@@ -6,117 +6,6 @@ import AgentHUDCore
 
 final class DockLayoutTests: XCTestCase {
     @MainActor
-    func testADockReminderIsAsLongAsWhatItSays() {
-        L10n.setLanguage(.en)
-        defer { L10n.setLanguage(.system) }
-        func reply(_ vendor: String) -> IslandAlert {
-            .completion(SessionCompletion(sessionID: "s", vendor: vendor, turnID: "t", task: "Task", model: "m",
-                                          startedAt: nil, completedAt: Date()))
-        }
-        let short = CompactWings.dock(for: reply("Pi"), scale: 1), claude = CompactWings.dock(for: reply("Claude"), scale: 1)
-        XCTAssertLessThan(short.leading, claude.leading, "Each half is as wide as its words")
-        XCTAssertEqual(short.trailing, claude.trailing)
-        XCTAssertLessThan(claude.width, 215, "Where two fixed wings made it 256")
-        XCTAssertEqual(CompactWings.dock(for: reply("An agent with a very long name indeed"), scale: 1).leading, 112,
-                       "No wider than one of the notch's wings; the name is cut short there as it is beside the notch")
-        XCTAssertGreaterThan(CompactWings.dock(for: reply("Claude"), scale: 1.6).width, claude.width * 1.5, "And to the dock's scale")
-        XCTAssertEqual(CompactWings.dock(for: reply("Claude"), scale: 0.5), claude, "Never smaller than at the default")
-        let request = PermissionRequest(id: "r", source: .claude, sessionID: "s", toolName: "Bash", summary: "Run the tests",
-                                        detail: "swift test", cwd: "~/work/agent-hud", at: Date())
-        XCTAssertGreaterThan(CompactWings.dock(for: .permission(request), waiting: 3, scale: 1).trailing,
-                             CompactWings.dock(for: .permission(request), waiting: 1, scale: 1).trailing,
-                             "A count of the requests waiting has its own room")
-    }
-
-    @MainActor
-    func testADockReminderIsAsTallAsOneOfTheDocksMarksAndTheNotchHasNoScale() {
-        func pill(_ placement: ScreenPlacement) -> CGFloat {
-            IslandRootView.dockCompactSize(edge: placement.edge, collapsedSize: CGSize(width: 216, height: 32),
-                                           scale: IslandRootView.dockScale(mode: placement.mode, placement: placement)).height
-        }
-        // A Simple panel's mark is its ring, drawn or not. A ring shorter than the default pill leaves the pill alone.
-        for (ring, height): (Double, CGFloat) in [(16, 26), (22, 26), (26, 26), (27, 27), (30, 30), (33, 33), (40, 40)] {
-            XCTAssertEqual(pill(ScreenPlacement(mode: .simple, simpleSize: ring)), height, "A \(ring) pt ring")
-            XCTAssertEqual(pill(ScreenPlacement(mode: .simple, simpleSize: ring, showsRings: false)), height)
-        }
-        // A Dynamic dock's is its logo, whatever the Simple panel on the same screen was set to.
-        for (logo, height): (Double, CGFloat) in [(12, 26), (20, 26), (27, 27), (36, 36)] {
-            XCTAssertEqual(pill(ScreenPlacement(mode: .logos, logoSize: logo, simpleSize: 40)), height, "A \(logo) pt logo")
-        }
-        // The notch has no size of its own to follow, so neither dock's setting reaches it.
-        XCTAssertEqual(IslandRootView.dockScale(mode: .notch, placement: ScreenPlacement(mode: .notch, logoSize: 36, simpleSize: 40)), 1)
-        // The row and its two margins are the pill, to the point, at every size.
-        for size in stride(from: 16.0, through: 40, by: 1) {
-            let row = IslandRootView.dockCompactRow(scale: IslandRootView.dockScale(mode: .simple, placement: ScreenPlacement(mode: .simple, simpleSize: size)))
-            XCTAssertEqual(row.height + 2 * row.inset, max(26, size), "A \(size) pt ring")
-        }
-    }
-
-    @MainActor
-    func testCompactDockEventsUseOneThinRowInsideTheirContactShoulders() async throws {
-        _ = NSApplication.shared
-        let alert = IslandAlert.completion(SessionCompletion(
-            sessionID: "compact-dock", vendor: "Codex", turnID: "reply", task: "New reply",
-            model: "test", startedAt: nil, completedAt: Date()))
-        for edge in HUDEdge.allCases {
-            let strip = edge.isHorizontal ? CGSize(width: 216, height: 32) : CGSize(width: 32, height: 400)
-            let wings = CompactWings.dock(for: alert, scale: 1)
-            let core = IslandRootView.dockCompactSize(edge: edge, collapsedSize: strip, wings: wings)
-            XCTAssertEqual(core, CGSize(width: wings.width, height: 26), "\(edge): events do not reserve the hidden logo strip")
-            XCTAssertLessThan(core.width, 256, "As long as what it says, not two full wings")
-            // Without its own halves a reminder is two full wings long, the most it can be. A dock set larger than its
-            // default grows its reminder with it, and one set smaller does not shrink it.
-            let widest = IslandRootView.dockCompactSize(edge: edge, collapsedSize: strip)
-            XCTAssertEqual(widest, CGSize(width: 256, height: 26))
-            XCTAssertEqual(IslandRootView.dockCompactSize(edge: edge, collapsedSize: strip, scale: 1.5), CGSize(width: 384, height: 39))
-            XCTAssertEqual(IslandRootView.dockCompactSize(edge: edge, collapsedSize: strip, scale: 0.6), widest)
-            XCTAssertEqual(IslandRootView.dockCompactSize(edge: edge, collapsedSize: CGSize(width: 80, height: 500), wings: wings), core,
-                           "Making the logo queue thicker or longer must not add empty space to a compact event")
-            let size = CGSize(width: core.width + (edge.isHorizontal ? 32 : 0),
-                              height: core.height + (edge.isHorizontal ? 0 : 32))
-            var root = IslandRootView(store: nil, isOpen: false, collapsedSize: strip,
-                                      collapsedTopRadius: IslandRootView.expandedTopRadius,
-                                      collapsedBottomRadius: 10, lightBorder: false, onOpenStats: {}, alert: alert)
-            root.hidesSilhouette = true
-            root.edge = edge
-            root.presentationFrame = CGRect(origin: .zero, size: size)
-            root.animatesGeometry = false
-            let controller = IslandWindowController(
-                frame: CGRect(x: -20000, y: -20000, width: size.width, height: size.height), rootView: root)
-            XCTAssertEqual(controller.contentHeight(for: root), core.height, accuracy: 1,
-                           "The actual compact view must fit a 20 pt row and two 3 pt margins")
-            controller.show()
-            defer { controller.panel.orderOut(nil) }
-            try await Task.sleep(for: .milliseconds(80))
-            let hosting = try XCTUnwrap(controller.panel.contentView)
-            hosting.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-            let scale = size.height / CGFloat(bitmap.pixelsHigh)
-            let painted = (0..<bitmap.pixelsHigh).filter {
-                (bitmap.colorAt(x: bitmap.pixelsWide / 2, y: $0)?.alphaComponent ?? 0) > 0.9
-            }
-            let shoulder = edge.isHorizontal ? CGFloat.zero : IslandRootView.expandedTopRadius
-            XCTAssertEqual((CGFloat(try XCTUnwrap(painted.first)) + 0.5) * scale, shoulder, accuracy: scale,
-                           "\(edge): the event's black core starts immediately after its shoulder")
-            XCTAssertEqual((CGFloat(try XCTUnwrap(painted.last)) + 0.5) * scale,
-                           size.height - shoulder, accuracy: scale)
-            let readableRows = (0..<bitmap.pixelsHigh).filter { row in
-                (0..<bitmap.pixelsWide).contains { column in
-                    guard let color = bitmap.colorAt(x: column, y: row)?.usingColorSpace(.deviceRGB) else { return false }
-                    return color.alphaComponent > 0.8 && max(color.redComponent, color.greenComponent, color.blueComponent) > 0.3
-                }
-            }
-            let firstText = try XCTUnwrap(readableRows.first)
-            let lastText = try XCTUnwrap(readableRows.last)
-            // A 17 pt mark in a 26 pt pill: the row's 3 pt margin and a point and a half of the row itself.
-            XCTAssertGreaterThanOrEqual(CGFloat(firstText) * scale, shoulder + 4,
-                                        "\(edge): the logo and text must fit within the compact row")
-            XCTAssertLessThanOrEqual(CGFloat(lastText + 1) * scale, size.height - shoulder - 4)
-        }
-    }
-
-    @MainActor
     func testEveryDockEdgeKeepsTheContactFlaresAndInsetInwardSides() {
         for edge in HUDEdge.allCases {
             let rect = CGRect(x: 37, y: 53, width: edge.isHorizontal ? 240 : 120,
@@ -162,7 +51,7 @@ final class DockLayoutTests: XCTestCase {
         for edge in [HUDEdge.left, .right] {
             var root = IslandRootView(store: store, isOpen: true, collapsedSize: CGSize(width: 32, height: 80),
                                       collapsedTopRadius: 8, collapsedBottomRadius: 10,
-                                      lightBorder: false, onOpenStats: {})
+                                      lightBorder: false)
             root.hidesSilhouette = true
             root.edge = edge
             let controller = IslandWindowController(
@@ -170,7 +59,7 @@ final class DockLayoutTests: XCTestCase {
             let shortHeight = controller.contentHeight(for: root)
             root = IslandRootView(store: store, isOpen: true, collapsedSize: CGSize(width: 32, height: 400),
                                   collapsedTopRadius: 8, collapsedBottomRadius: 10,
-                                  lightBorder: false, onOpenStats: {})
+                                  lightBorder: false)
             root.hidesSilhouette = true
             root.edge = edge
             XCTAssertEqual(controller.contentHeight(for: root), shortHeight, accuracy: 1,
@@ -193,11 +82,11 @@ final class DockLayoutTests: XCTestCase {
             let placement = ScreenPlacement(mode: .logos, edge: edge)
             var root = IslandRootView(store: nil, isOpen: true, collapsedSize: rect.size,
                                       collapsedTopRadius: 8, collapsedBottomRadius: 10,
-                                      lightBorder: false, onOpenStats: {})
+                                      lightBorder: false)
             root.hidesSilhouette = true
             root.edge = edge
-            root.logoQueue = LogoQueueConfig(items: [LogoQueueItem(vendor: "Claude", isWorking: false)],
-                                             placement: placement, settings: AgentHUDCore.Settings())
+            root.logoQueue = LogoQueueConfig(items: [LogoQueueItem(vendor: "Claude")],
+                                             placement: placement)
             root.logoQueueFrame = rect
             root.presentationSize = size
             root.animatesGeometry = false
@@ -240,16 +129,15 @@ final class DockLayoutTests: XCTestCase {
         let strip = CGRect(x: 508, y: 0, width: 32, height: 400)
         var root = IslandRootView(store: store, isOpen: true, collapsedSize: strip.size,
                                   collapsedTopRadius: 8, collapsedBottomRadius: 10,
-                                  lightBorder: false, onOpenStats: {},
-                                  additionalHUDControls: { AnyView(DockFooterMarker().frame(width: 16, height: 28)) })
+                                  lightBorder: false)
         root.hidesSilhouette = true
         root.edge = .right
         root.presentationSize = canvas
         root.presentationFrame = card
         root.logoQueueFrame = strip
         root.logoQueue = LogoQueueConfig(items: (0..<12).map { _ in
-            LogoQueueItem(vendor: "Claude", isWorking: false)
-        }, placement: ScreenPlacement(mode: .logos, edge: .right, logoSize: 24), settings: settings.settings)
+            LogoQueueItem(vendor: "Claude")
+        }, placement: ScreenPlacement(mode: .logos, edge: .right, logoSize: 24))
         root.animatesGeometry = false
         let controller = IslandWindowController(
             frame: CGRect(x: -20000, y: -20000, width: canvas.width, height: canvas.height), rootView: root)
@@ -257,22 +145,23 @@ final class DockLayoutTests: XCTestCase {
         controller.show()
         defer { controller.panel.orderOut(nil) }
         let deadline = Date().addingTimeInterval(3)
-        while (footerMarker(in: hosting) == nil || queue(in: hosting) == nil), Date() < deadline {
+        while queue(in: hosting) == nil, Date() < deadline {
             hosting.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(20))
         }
         hosting.layoutSubtreeIfNeeded()
-        let marker = try XCTUnwrap(footerMarker(in: hosting))
         let queue = try XCTUnwrap(queue(in: hosting))
-        let footer = topLeftRect(marker.convert(marker.bounds, to: hosting), in: hosting)
         let queueRect = topLeftRect(queue.convert(queue.bounds, to: hosting), in: hosting)
-        XCTAssertTrue(card.contains(footer), "Upright content must stay inside the short card, at its explicit y=200")
-        XCTAssertEqual(footer.maxY, card.maxY - IslandRootView.expandedTopRadius - 14, accuracy: 1,
-                       "The footer must use card height, rather than the entire queue canvas")
         XCTAssertEqual(queueRect, strip, "The independently anchored logos must retain the full 400pt canvas")
 
         let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        // The footer's 28 pt controls end at the card's own bottom inset, inside the short card at its explicit y=200:
+        // the card's height places them, not the whole queue canvas.
+        let footer = CGRect(x: 0, y: card.maxY - IslandRootView.expandedTopRadius - 14 - 28, width: strip.minX, height: 28)
+        XCTAssertTrue(card.contains(footer))
+        XCTAssertGreaterThan(brightest(in: footer, of: bitmap, canvas: canvas), 0.25,
+                             "The footer must be drawn at the bottom of the short card")
         let centreX = bitmap.pixelsWide / 2
         let occupied = (0..<bitmap.pixelsHigh).filter { (bitmap.colorAt(x: centreX, y: $0)?.alphaComponent ?? 0) > 0.9 }
         let scale = canvas.height / CGFloat(bitmap.pixelsHigh)
@@ -296,10 +185,18 @@ final class DockLayoutTests: XCTestCase {
                                          width: rect.width, height: rect.height)
     }
 
-    @MainActor
-    private func footerMarker(in view: NSView) -> DockFooterMarkerView? {
-        if let marker = view as? DockFooterMarkerView { return marker }
-        return view.subviews.lazy.compactMap { self.footerMarker(in: $0) }.first
+    /// The brightest opaque pixel in `rect`, as the mean of its components: the panel's controls are drawn in its
+    /// secondary colour over a black card.
+    private func brightest(in rect: CGRect, of bitmap: NSBitmapImageRep, canvas: CGSize) -> CGFloat {
+        let sx = CGFloat(bitmap.pixelsWide) / canvas.width, sy = CGFloat(bitmap.pixelsHigh) / canvas.height
+        var brightest: CGFloat = 0
+        for y in Int(rect.minY * sy)..<Int(rect.maxY * sy) where y >= 0 && y < bitmap.pixelsHigh {
+            for x in Int(rect.minX * sx)..<Int(rect.maxX * sx) where x >= 0 && x < bitmap.pixelsWide {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), color.alphaComponent > 0.5 else { continue }
+                brightest = max(brightest, (color.redComponent + color.greenComponent + color.blueComponent) / 3)
+            }
+        }
+        return brightest
     }
 
     @MainActor
@@ -308,10 +205,3 @@ final class DockLayoutTests: XCTestCase {
         return view.subviews.lazy.compactMap { self.queue(in: $0) }.first
     }
 }
-
-private struct DockFooterMarker: NSViewRepresentable {
-    func makeNSView(context: Context) -> DockFooterMarkerView { DockFooterMarkerView() }
-    func updateNSView(_ view: DockFooterMarkerView, context: Context) {}
-}
-
-private final class DockFooterMarkerView: NSView {}

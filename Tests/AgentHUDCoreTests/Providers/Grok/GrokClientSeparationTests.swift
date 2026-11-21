@@ -81,33 +81,6 @@ final class GrokClientSeparationTests: XCTestCase {
         XCTAssertFalse(GrokBotLocator.isInstalled(home: home, applicationURLs: []), "an explicit empty app inventory keeps the test independent of installed apps")
     }
 
-    func testCompletionSwitchesUseTheSessionsExecutionClientAndNeverReplaySuppressedTurns() {
-        let sessions = [session("cli", client: "Grok CLI"), session("bot", client: "Grok Bot")]
-        let first = [completion("cli", turn: "1", seconds: 1), completion("bot", turn: "1", seconds: 2)]
-        var settings = Settings()
-        settings.setLiveStatus(for: "Grok CLI", enabled: false)
-        settings.setLiveStatus(for: "Grok Bot", enabled: true)
-        var tracker = IslandEventTracker(startedAt: now)
-        let report = UsageReport(generatedAt: now.addingTimeInterval(3), snapshots: [], sessions: sessions, completions: first)
-        let filledBot = completion("bot", turn: "1", seconds: 2, client: "Grok Bot")
-        XCTAssertEqual(tracker.update(report: report, agents: [], now: report.generatedAt, settings: settings).completions, [filledBot])
-
-        settings.setLiveStatus(for: "Grok CLI", enabled: true)
-        settings.setLiveStatus(for: "Grok Bot", enabled: false)
-        let next = [completion("cli", turn: "2", seconds: 4), completion("bot", turn: "2", seconds: 5)]
-        let refreshed = UsageReport(generatedAt: now.addingTimeInterval(6), snapshots: [], sessions: sessions, completions: first + next)
-        let filledCLI = completion("cli", turn: "2", seconds: 4, client: "Grok CLI")
-        XCTAssertEqual(tracker.update(report: refreshed, agents: [], now: refreshed.generatedAt, settings: settings).completions, [filledCLI])
-        XCTAssertTrue(tracker.update(report: refreshed, agents: [], now: refreshed.generatedAt).completions.isEmpty)
-
-        var legacyTracker = IslandEventTracker(startedAt: now)
-        var legacySettings = Settings()
-        legacySettings.setLiveStatus(for: "Grok", enabled: false)
-        let legacy = UsageReport(generatedAt: report.generatedAt, snapshots: [], sessions: [], completions: [first[0]])
-        XCTAssertTrue(legacyTracker.update(report: legacy, agents: [], now: legacy.generatedAt, settings: legacySettings).completions.isEmpty,
-                      "a completion without client metadata keeps the former CLI switch")
-    }
-
     func testCompletionClientRoundTripsWithoutChangingProviderOrEventIdentity() throws {
         let legacy = completion("same-session", turn: "same-turn", seconds: 1)
         for client in ["Grok CLI", "Grok Bot"] {

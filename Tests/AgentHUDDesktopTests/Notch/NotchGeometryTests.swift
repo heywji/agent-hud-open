@@ -147,8 +147,8 @@ final class NotchGeometryTests: XCTestCase {
     }
 }
 
-final class DockGlowOrientationTests: XCTestCase {
-    func testEachEdgeMapsItsBackdropLipToTheSameTopEdgeCoordinateSpace() {
+final class DockShadowOrientationTests: XCTestCase {
+    func testEachEdgeMapsItsIslandToTheSameTopEdgeCoordinateSpace() {
         let screen = CGRect(x: -1600, y: -200, width: 1600, height: 900)
         let cases: [(HUDEdge, CGRect, CGRect)] = [
             (.top, CGRect(x: -1100, y: 700, width: 300, height: 2),
@@ -161,18 +161,18 @@ final class DockGlowOrientationTests: XCTestCase {
              CGRect(x: 300, y: 1600, width: 300, height: 2)),
         ]
         for (edge, island, expected) in cases {
-            XCTAssertEqual(GlowWindowController.canonicalIslandFrame(island, panel: screen, edge: edge), expected)
+            XCTAssertEqual(ShadowWindowController.canonicalIslandFrame(island, panel: screen, edge: edge), expected)
         }
     }
 
-    func testSideQueueColoursFollowMarksFromTopToBottom() {
+    func testSideQueuesRunFromTopToBottomAlongTheCanvas() {
         let screen = CGRect(x: 0, y: 0, width: 1600, height: 900)
         for edge in [HUDEdge.left, .right] {
             let x: CGFloat = edge == .left ? 0 : 1580
             let upper = CGRect(x: x, y: 850, width: 20, height: 20)
             let lower = upper.offsetBy(dx: 0, dy: -28)
-            let upperCanonical = GlowWindowController.canonicalIslandFrame(upper, panel: screen, edge: edge)
-            let lowerCanonical = GlowWindowController.canonicalIslandFrame(lower, panel: screen, edge: edge)
+            let upperCanonical = ShadowWindowController.canonicalIslandFrame(upper, panel: screen, edge: edge)
+            let lowerCanonical = ShadowWindowController.canonicalIslandFrame(lower, panel: screen, edge: edge)
             XCTAssertEqual(lowerCanonical.minX - upperCanonical.minX, 28)
             XCTAssertEqual(lowerCanonical.minY, upperCanonical.minY)
         }
